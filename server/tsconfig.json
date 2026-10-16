@@ -1,0 +1,9 @@
+{
+  // Node server: no DOM, Node types. Shares src/sim, src/input/bot and src/net.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["."]
+}
