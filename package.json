@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.21.0",
+    "@effect/platform-node": "4.0.5",
+    "effect": "4.0.5",
     "three": "^0.186.1"
   },
   "devDependencies": {
