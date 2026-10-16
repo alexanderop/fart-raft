@@ -1,7 +1,7 @@
 import { Clock, Context, Duration, Effect, Layer, Option, PubSub, Ref, Stream } from "effect";
 import { botSource } from "../src/input/bot.ts";
 import { readSeats, type InputSource } from "../src/input/sources.ts";
-import { RoomFull, ServerMsg } from "../src/net/protocol.ts";
+import { FRAME_TICKS, RoomFull, ServerMsg } from "../src/net/protocol.ts";
 import { crewZones, MAX_CREW, TICK_RATE, type Zone } from "../src/sim/constants.ts";
 import { createSim, initPhysics, snapshot, step } from "../src/sim/sim.ts";
 import {
@@ -13,9 +13,6 @@ import {
 } from "../src/sim/types.ts";
 
 type Seat = { kind: "bot" } | { kind: "human"; input: SeatInput };
-
-/** Broadcast every 3rd sim tick: 20 Hz on the wire, 60 Hz in the sim. */
-const FRAME_EVERY = 3;
 
 const NANOS = 1_000_000_000n;
 const RATE = BigInt(TICK_RATE);
@@ -56,11 +53,11 @@ function newRace(level: LevelData, zones: readonly Zone[]) {
     seat.kind === "human" ? { read: () => seat.input } : bots[i]!;
 
   return {
-    /** One fixed tick. Returns the frame to broadcast on every FRAME_EVERY-th tick. */
+    /** One fixed tick. Returns the frame to broadcast on every FRAME_TICKS-th tick. */
     tick(table: readonly Seat[]): ServerMsg | undefined {
       pending.push(...step(sim, readSeats(table.map(sourceFor))));
       latest = snapshot(sim);
-      if (latest.tick % FRAME_EVERY !== 0) return undefined;
+      if (latest.tick % FRAME_TICKS !== 0) return undefined;
       const events = pending;
       pending = [];
       return ServerMsg.cases.Frame.make({

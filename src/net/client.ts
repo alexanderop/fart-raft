@@ -2,7 +2,7 @@ import { Cause, Context, Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import type { SeatInput } from "../sim/types.ts";
-import { RaftRpcs, ServerMsg, type Frame } from "./protocol.ts";
+import { RaftRpcs, RoomFull, ServerMsg, type Frame } from "./protocol.ts";
 
 // The only place the browser touches Effect: everything else sees the plain Connection below.
 
@@ -67,7 +67,7 @@ export async function connect(url: string, timeoutMs = 5000): Promise<Connection
       Effect.matchCause({
         onSuccess: () => lost("The server closed the connection"),
         onFailure: (cause) =>
-          lost(Cause.hasFails(cause) ? "Could not join the room" : "Connection lost"),
+          lost(Cause.squash(cause) instanceof RoomFull ? "The room is full" : "Connection lost"),
       }),
     ),
   );

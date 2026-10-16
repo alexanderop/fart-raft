@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
-    "server": "node server/main.ts",
+    "dev:server": "node server/main.ts",
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc && tsc -p tsconfig.sim.json && tsc -p server",

@@ -6,6 +6,9 @@ import type * as Sim from "../sim/types.ts";
 // Wire schemas for the sim's plain-data types. Shared by the browser and the server, so no DOM
 // and no Node here. `Drift` below fails the typecheck when src/sim/types.ts and these diverge.
 
+/** The server broadcasts a Frame every this many sim ticks: 20 Hz on the wire, 60 Hz in the sim. */
+export const FRAME_TICKS = 3;
+
 const Num = Schema.Finite;
 
 const Vec2 = Schema.Struct({ x: Num, y: Num });
