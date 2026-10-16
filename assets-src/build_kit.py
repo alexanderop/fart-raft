@@ -12,11 +12,15 @@ import math
 import os
 import random
 
+import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
 KIT = "kit"
-SIGN_FONT = "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf"  # falls back to Bfont
+SIGN_FONTS = [
+    "/System/Library/Fonts/Supplemental/Arial Black.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
+]  # falls back to Blender's Bfont
 SEATS = [(-1.0, 0.8), (-1.0, -0.8), (1.0, 0.8), (1.0, -0.8)]
 
 # ── scene helpers ──────────────────────────────────────────────────────────────
@@ -120,6 +124,40 @@ def torus(loc, major, minor, material, rot=(0, 0, 0), scale=(1, 1, 1), seg=32, m
     return _finish(o, material, True)
 
 
+def spike(base, direction, r, h, material, sx=1.0, n=6):
+    """White cone: base circle (radius r) centred at `base`, apex `h` along `direction`.
+    `sx` squeezes the X axis so a non-uniformly scaled template (x by hx, y/z by hy) still reads round."""
+    base, d = Vector(base), Vector(direction).normalized()
+    u = d.cross(Vector((0, 0, 1)))
+    if u.length < 1e-4:
+        u = Vector((1, 0, 0))
+    u.normalize()
+    v = d.cross(u)
+    ring = [base + (u * math.cos(a) + v * math.sin(a)) * r for a in (i / n * math.tau for i in range(n))]
+    pts = ring + [base + d * h]
+    pts = [Vector((base.x + (p.x - base.x) * sx, p.y, p.z)) for p in pts]
+    bm = bmesh.new()
+    vs = [bm.verts.new(p) for p in pts]
+    for i in range(n):
+        bm.faces.new((vs[i], vs[(i + 1) % n], vs[n]))
+    bm.faces.new(vs[:n][::-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new("spike")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new("spike", me)
+    bpy.context.scene.collection.objects.link(o)
+    return _finish(o, material, False)
+
+
+def limb(a, b, r0, r1, material, verts=8):
+    """Tapered cylinder from point a to point b."""
+    a, b = Vector(a), Vector(b)
+    d = b - a
+    rot = Vector((0, 0, 1)).rotation_difference(d).to_euler()
+    return cyl((a + b) / 2, r0, d.length, material, verts, rot=rot, r2=r1)
+
+
 def join(name, parts, parent=None, location=(0, 0, 0)):
     """Bake transforms, join parts into one mesh object named `name` with origin at `location`."""
     bpy.ops.object.select_all(action="DESELECT")
@@ -148,41 +186,40 @@ M = {}
 
 def palette():
     M.update(
-        ring=mat("ring_peach", 0xF6B26B, 0.45),
-        ring_low=mat("ring_cyan", 0x38C6E8, 0.45),
-        ring_stripe=mat("ring_cream", 0xFFF1D6, 0.5),
-        floor=mat("raft_floor", 0xF2D2A2, 0.6),
-        rope=mat("rope", 0xE9D3A0, 0.95),
+        ring=mat("ring_lime", 0xA9DE3C, 0.45),
+        ring_low=mat("ring_green", 0x6FBF3A, 0.45),
+        ring_stripe=mat("ring_trim", 0xF2582E, 0.5),
+        floor=mat("raft_floor", 0x7FD04A, 0.6),
+        floor_line=mat("raft_floor_line", 0x58A834, 0.7),
+        rope=mat("rope", 0xE23B3B, 0.7),
         white=mat("eye_white", 0xFFFFFF, 0.3),
         pupil=mat("pupil", 0x111111, 0.2),
         nostril=mat("nostril", 0x2A2030, 0.6),
         blush=mat("blush", 0xFF8FA3, 0.6),
         tooth=mat("tooth", 0xFFFBEA, 0.4),
-        bamboo=mat("bamboo", 0x7CC444, 0.5),
-        bamboo_node=mat("bamboo_node", 0x4E9A2A, 0.5),
-        bamboo_hi=mat("bamboo_hi", 0xA6DD62, 0.5),
-        rock=mat("rock", 0x5E5F66, 0.9),
-        rock_hi=mat("rock_top", 0x7C7D85, 0.9),
-        bark=mat("bark", 0x6B4A3A, 0.9),
         leaf=mat("leaf", 0x3E9E2E, 0.8),
-        leaf_hi=mat("leaf_light", 0x63BE3A, 0.8),
-        leaf_dk=mat("leaf_dark", 0x2D7A25, 0.8),
         fern=mat("fern", 0xC9D93C, 0.7),
         grass=mat("grass", 0x7FCB45, 0.8),
-        lily=mat("lily", 0x3FA34A, 0.6),
-        petal=mat("petal", 0xF59AB0, 0.6),
-        petal_c=mat("petal_center", 0xFFD65C, 0.6),
-        cattail=mat("cattail", 0x7A4B2A, 0.9),
-        post=mat("post_pink", 0xF27FB8, 0.5),
-        bulb=mat("bulb", 0xFFF6E0, 0.2),
-        sign=mat("sign_board", 0xFFF3D9, 0.7),
-        sign_frame=mat("sign_frame", 0xF27FB8, 0.5),
-        ink=mat("sign_ink", 0x2E7D4F, 0.6),
-        ink_finish=mat("sign_ink_finish", 0xE0457B, 0.6),
-        check_dark=mat("checker_dark", 0x222222, 0.6),
-        spin_a=mat("spinner_pink", 0xF0609E, 0.45),
-        spin_b=mat("spinner_white", 0xFFF6EE, 0.45),
-        spin_cap=mat("spinner_cap", 0xFFC93C, 0.45),
+        bark=mat("bark", 0x6B4A3A, 0.9),
+        leaf_hi=mat("leaf_light", 0x63BE3A, 0.8),
+        leaf_dk=mat("leaf_dark", 0x2D7A25, 0.8),
+        gold=mat("bamboo_gold", 0xEDB040, 0.45),
+        gold_node=mat("bamboo_gold_joint", 0xC4801F, 0.5),
+        gold_hi=mat("bamboo_gold_hi", 0xF8D070, 0.45),
+        ribbon=mat("ribbon_pink", 0xF0509A, 0.5),
+        gate_rope=mat("gate_rope", 0x9A6532, 0.9),
+        sign=mat("sign_board", 0xE0502B, 0.6),
+        sign_frame=mat("sign_frame", 0x8F2D24, 0.7),
+        sign_trim=mat("sign_trim", 0x3FC0B2, 0.5),
+        ink=mat("sign_ink", 0xFFD23F, 0.45),
+        check_dark=mat("checker_dark", 0x2A2230, 0.6),
+        check_light=mat("checker_light", 0xFFF3D9, 0.6),
+        magenta=mat("hazard_magenta", 0xD8329A, 0.45),
+        purple=mat("strip_purple", 0xB02FA8, 0.5),
+        spike=mat("spike_white", 0xFFFDF4, 0.35),
+        mint=mat("hazard_mint", 0x4CCFB6, 0.45),
+        hub=mat("hazard_hub", 0xFFF6EE, 0.45),
+        trunk=mat("trunk_brown", 0x7A4A38, 0.9),
     )
 
 
@@ -271,16 +308,22 @@ def capybara(body, belly):
 
 
 def build_raft():
+    """Round inflatable ring: lime tube on a green tube, red-orange trim band, planked green floor."""
     lower = torus((0, 0, 0.22), 1.12, 0.3, M["ring_low"], scale=(1, 0.8, 1))
     upper = torus((0, 0, RING_Z), 1.1, 0.3, M["ring"], scale=(1, 0.8, 1))
-    stripe = torus((0, 0, RING_Z + 0.02), 1.1, 0.305, M["ring_stripe"], scale=(1, 0.8, 0.25), mseg=12)
+    stripe = torus((0, 0, RING_Z + 0.02), 1.1, 0.318, M["ring_stripe"], scale=(1, 0.8, 0.4), mseg=12)
     floor = cyl((0, 0, 0.32), 1.15, 0.14, M["floor"], 32)
     floor.scale = (1, 0.8, 1)
     parts = [lower, upper, stripe, floor]
-    for i in range(10):  # rope handles on the lower ring
+    for k in range(-3, 4):  # plank seams along x, clipped to the floor ellipse
+        y = k * 0.24
+        half = 1.1 * math.sqrt(max(0.0, 1 - (y / 0.88) ** 2)) - 0.05
+        if half > 0.2:
+            parts.append(box((0, y, 0.395), (half * 2, 0.025, 0.012), M["floor_line"]))
+    for i in range(10):  # red rope handles on the lower ring
         a = i / 10 * math.tau + 0.3
         x, y = math.cos(a) * 1.42, math.sin(a) * 1.42 * 0.8
-        parts.append(torus((x, y, 0.22), 0.11, 0.025, M["rope"], rot=(math.pi / 2, 0, a + math.pi / 2), seg=12, mseg=5))
+        parts.append(torus((x, y, 0.22), 0.11, 0.03, M["rope"], rot=(math.pi / 2, 0, a + math.pi / 2), seg=12, mseg=5))
     raft = join("raft", parts)
     builders = {"hippo": hippo, "croc": croc, "capybara": capybara}
     for i, ((sx, sy), (kind, body, belly)) in enumerate(zip(SEATS, ANIMALS)):
@@ -306,90 +349,179 @@ def build_raft():
 # ── environment ────────────────────────────────────────────────────────────────
 
 
-def build_rim():
-    """Bamboo tube lining every bank. 2 m along X, tiled by the client."""
-    r, z = 0.35, 0.35
-    parts = [cyl((0, 0, z), r, 2.0, M["bamboo"], 14, rot=(0, math.pi / 2, 0))]
-    for x in (-0.98, 0.98):
-        parts.append(cyl((x, 0, z), r * 1.07, 0.06, M["bamboo_node"], 14, rot=(0, math.pi / 2, 0)))
-    parts.append(cyl((0, 0, z + r * 0.62), r * 0.45, 1.8, M["bamboo_hi"], 10, rot=(0, math.pi / 2, 0)))
-    parts[-1].scale = (1, 1, 0.35)
-    return join("rim", parts)
-
-
-def build_rock(name="rock", seed=1):
-    """Grey columnar rock, footprint 2 x 2, ~2 high."""
-    rnd = random.Random(seed)
-    parts = []
-    cols = [(-0.35, 0.3, 1.0, 1.9), (0.35, 0.25, 0.9, 1.5), (0.0, -0.4, 1.0, 1.2), (-0.45, -0.35, 0.7, 0.9), (0.45, -0.3, 0.7, 0.8)]
-    for x, y, w, h in cols:
-        rot = (rnd.uniform(-0.08, 0.08), rnd.uniform(-0.08, 0.08), rnd.uniform(0, 1.2))
-        o = cyl((x, y, h / 2 - 0.2), w * 0.55, h + 0.4, M["rock"], 6, rot=rot, smooth=False, r2=w * 0.45)
-        parts.append(o)
-        top = cyl((x, y, h + 0.0), w * 0.46, 0.06, M["rock_hi"], 6, rot=rot, smooth=False)
-        parts.append(top)
-    return join(name, parts)
-
-
 def build_spinner():
-    """Candy-striped log, 2 long on X, radius 1, centred at origin. Client scales (hx, hy, hy)."""
-    parts = []
-    n = 8
-    for i in range(n):
-        x = -1 + (i + 0.5) * 2 / n
-        parts.append(cyl((x, 0, 0), 1.0, 2 / n, M["spin_a"] if i % 2 else M["spin_b"], 16, rot=(0, math.pi / 2, 0)))
+    """Magenta spiked bar, 2 long on X, radius 1, with a hub post. Client scales (hx, hy, hy).
+
+    Everything round is pre-squeezed in X by HY/HX = 0.4 / 4.5 (the pond spinner) so spikes and the
+    hub read as circles after the non-uniform scale. Bar centre sits 0.6 above the origin plane."""
+    sx, zc = 0.09, 0.6
+    parts = [cyl((0, 0, zc), 1.0, 2.0, M["magenta"], 20, rot=(0, math.pi / 2, 0))]
     for x in (-1.0, 1.0):
-        parts.append(sphere((x, 0, 0), (0.12, 0.85, 0.85), M["spin_cap"], 16, 8))
-    parts.append(cyl((0, 0, 0), 0.5, 2.4, M["spin_cap"], 12))  # hub
-    return join("spinner", parts)
+        parts.append(cyl((x, 0, zc), 1.08, 0.07, M["mint"], 20, rot=(0, math.pi / 2, 0)))
+    for i in range(8):
+        x = -0.875 + i * 0.25
+        for d in ((0, 1, 0), (0, -1, 0), (0, 0, 1)):
+            parts.append(spike((x, d[1] * 0.92, zc + d[2] * 0.92), d, 0.3, 1.0, M["spike"], sx))
+    hub = cyl((0, 0, zc), 1.5, 4.0, M["hub"], 20)
+    hub.scale = (sx, 1, 1)
+    cap = cyl((0, 0, zc + 2.02), 1.75, 0.1, M["mint"], 20)
+    cap.scale = (sx, 1, 1)
+    return join("spinner", parts + [hub, cap])
+
+
+def build_sweeper():
+    """Magenta spiked arm, 2 long on +X, origin at the pivot end. Client scales (len/2, 1, 1).
+
+    Round bits are pre-squeezed for a scale of ~4 (arm length ~8)."""
+    sx, zc, r = 0.25, 0.45, 0.3
+    parts = [cyl((1.0, 0, zc), r, 2.0, M["magenta"], 14, rot=(0, math.pi / 2, 0))]
+    cap = cyl((0, 0, zc), 0.55, 0.9, M["mint"], 20)
+    cap.scale = (sx, 1, 1)
+    parts.append(cap)
+    tip = cyl((1.97, 0, zc), r * 1.12, 0.06, M["mint"], 14, rot=(0, math.pi / 2, 0))
+    parts.append(tip)
+    for i in range(7):
+        x = 0.4 + i * 0.25
+        for d in ((0, 1, 0), (0, -1, 0), (0, 0, 1)):
+            parts.append(spike((x, d[1] * r * 0.9, zc + d[2] * r * 0.9), d, 0.1, 0.3, M["spike"], sx))
+    return join("sweeper", parts)
+
+
+def build_spike_strip():
+    """Bank-side hazard strip, 2 m on X, 0.5 tall, 0.4 deep. Spikes point toward Blender +Y
+    (= sim +y = three -z), i.e. out of the bank into the channel. Tiled along banks."""
+    parts = [box((0, 0, 0.25), (2.0, 0.4, 0.5), M["purple"], bevel=0.05)]
+    for x in (-0.75, -0.25, 0.25, 0.75):
+        parts.append(box((x, 0, 0.51), (0.15, 0.15, 0.05), M["spike"], rot=(0, 0, math.pi / 4)))
+        parts.append(spike((x, 0.19, 0.2), (0, 1, 0), 0.1, 0.32, M["spike"]))
+    return join("spike_strip", parts)
+
+
+BAMBOO_H = 8.5  # gate pole height; gates.ts hangs the crossbar at BAR_Z
+BAR_Z = 7.4
+
+
+def gold_pole(parts, length, r, rot, at):
+    """Golden bamboo: segments with fatter joints. `at(t)` maps distance along the pole to a location."""
+    seg = 1.4
+    n = max(1, round(length / seg))
+    step = length / n
+    for i in range(n):
+        parts.append(cyl(at((i + 0.5) * step), r * (1.0 - 0.015 * i), step - 0.04, M["gold"], 12, rot=rot))
+        if i:
+            parts.append(cyl(at(i * step), r * 1.22, 0.1, M["gold_node"], 12, rot=rot))
+    return parts
+
+
+def build_gate_post():
+    parts = gold_pole([], BAMBOO_H, 0.24, (0, 0, 0), lambda t: (0, 0, t))
+    parts.append(cyl((0, 0, BAMBOO_H), 0.3, 0.16, M["gold_node"], 12))
+    parts.append(cyl((0, 0, BAMBOO_H + 0.085), 0.2, 0.02, M["gate_rope"], 12))  # hollow top
+    for z in (BAR_Z - 0.2, BAR_Z + 0.15):  # rope lashing where the crossbar crosses
+        parts.append(torus((0, 0, z), 0.3, 0.07, M["gate_rope"], seg=16, mseg=6))
+    parts.append(cyl((0, 0, 0.1), 0.34, 0.2, M["gold_node"], 12))  # foot
+    z = 0.75  # pink ribbon tied around the base
+    parts.append(torus((0, 0, z), 0.27, 0.05, M["ribbon"], seg=16, mseg=6))
+    parts.append(sphere((0.28, 0, z), (0.09, 0.09, 0.09), M["ribbon"], 8, 6))
+    for s in (1, -1):
+        loop = sphere((0.4, s * 0.2, z + 0.06), (0.17, 0.13, 0.07), M["ribbon"], 10, 6)
+        loop.rotation_euler = (0, 0, s * 0.6)
+        parts.append(loop)
+        tail = sphere((0.34, s * 0.12, z - 0.2), (0.05, 0.03, 0.2), M["ribbon"], 8, 6)
+        tail.rotation_euler = (s * -0.25, 0.15, 0)
+        parts.append(tail)
+    for i in range(6):  # flower-like ribbon splay on the ground
+        a = i / 6 * math.tau
+        petal = sphere((math.cos(a) * 0.45, math.sin(a) * 0.45, 0.2), (0.25, 0.11, 0.05), M["ribbon"], 8, 4)
+        petal.rotation_euler = (0, 0, a)
+        parts.append(petal)
+    join("gate_post", parts)
+
+
+def build_gate_bar():
+    """Golden crossbar, 2 m on X centred at the origin. Client scales x by the gate half-width."""
+    parts = [cyl((0, 0, 0), 0.24, 1.96, M["gold"], 12, rot=(0, math.pi / 2, 0))]
+    for x in (-0.5, 0.0, 0.5):
+        parts.append(cyl((x, 0, 0), 0.29, 0.03, M["gold_node"], 12, rot=(0, math.pi / 2, 0)))
+    parts.append(cyl((0, 0, 0.05), 0.2, 1.9, M["gold_hi"], 6, rot=(0, math.pi / 2, 0)))
+    parts[-1].scale = (1, 0.3, 0.2)
+    return join("gate_bar", parts)
+
+
+def fit_text(o, max_w, max_h):
+    s = min(max_w / o.dimensions.x, max_h / o.dimensions.y)
+    o.scale = (s, s, 1)
+
+
+def build_sign(name, label, finish=False):
+    """Red-orange board in a brick frame with teal trim and chunky yellow lettering on both faces,
+    centred on the origin, 6.4 wide. Hangs from the crossbar by two ropes; tilted a few degrees."""
+    board = [
+        box((0, 0, 0), (6.4, 0.18, 1.6), M["sign_frame"], bevel=0.05),
+        box((0, 0, 0), (6.0, 0.2, 1.2), M["sign_trim"], bevel=0.03),
+        box((0, 0, 0), (5.8, 0.22, 1.0), M["sign"], bevel=0.03),
+    ]
+    if finish:
+        for k in range(32):
+            for z in (0.7, -0.7):
+                m = M["check_dark"] if (k + (z > 0)) % 2 else M["check_light"]
+                board.append(box((-3.1 + k * 0.2, 0, z), (0.2, 0.2, 0.2), m))
+    font = next((f for f in SIGN_FONTS if os.path.exists(f)), None)
+    for side in (1, -1):
+        bpy.ops.object.text_add(location=(0, side * 0.2, 0), rotation=(math.pi / 2, 0, 0 if side < 0 else math.pi))
+        t = bpy.context.object
+        t.data.body = label
+        if font:
+            t.data.font = bpy.data.fonts.load(font, check_existing=True)
+        t.data.align_x = "CENTER"
+        t.data.align_y = "CENTER"
+        t.data.size = 1.0
+        t.data.extrude = 0.1
+        t.data.bevel_depth = 0.015
+        t.data.bevel_resolution = 0
+        t.data.resolution_u = 3
+        bpy.ops.object.convert(target="MESH")
+        t = bpy.context.object
+        fit_text(t, 5.3, 0.8)
+        board.append(_finish(t, M["ink"], False))
+    bpy.context.view_layer.update()
+    tilt = Matrix.Rotation(-0.05, 4, "Y")
+    for o in board:
+        o.matrix_world = tilt @ o.matrix_world
+    for x in (-2.3, 2.3):
+        board.append(cyl((x, 0, 0.95), 0.045, 0.45, M["gate_rope"], 6))
+    join(name, board)
 
 
 def build_gate():
-    parts = [cyl((0, 0, 2.5), 0.22, 5.0, M["post"], 12)]
-    for i in range(9):
-        a = i * 1.7
-        parts.append(sphere((math.cos(a) * 0.22, math.sin(a) * 0.22, 0.5 + i * 0.5), (0.09, 0.09, 0.09), M["bulb"], 8, 6))
-    parts.append(sphere((0, 0, 5.1), (0.35, 0.35, 0.35), M["bulb"]))
-    join("gate_post", parts)
-    for name, label, ink in (("gate_sign", "CHECKPOINT", M["ink"]), ("finish_sign", "FINISH", M["ink_finish"])):
-        board = [box((0, 0, 0), (6.0, 0.18, 1.2), M["sign"], bevel=0.05)]
-        board.append(box((0, 0, 0), (6.25, 0.14, 1.45), M["sign_frame"], bevel=0.06))
-        if name == "finish_sign":
-            for k in range(12):  # checker trim along the top
-                board.append(box((-2.75 + k * 0.5, 0, 0.82), (0.5, 0.16, 0.25), M["check_dark"] if k % 2 else M["bulb"]))
-        for side in (1, -1):
-            bpy.ops.object.text_add(location=(0, side * 0.1, 0), rotation=(math.pi / 2, 0, 0 if side < 0 else math.pi))
-            t = bpy.context.object
-            t.data.body = label
-            if os.path.exists(SIGN_FONT):
-                t.data.font = bpy.data.fonts.load(SIGN_FONT, check_existing=True)
-            t.data.align_x = "CENTER"
-            t.data.align_y = "CENTER"
-            t.data.size = 0.85 if label == "FINISH" else 0.72
-            t.data.extrude = 0.02
-            bpy.ops.object.convert(target="MESH")
-            board.append(_finish(bpy.context.object, ink, False))
-        join(name, board)
+    build_gate_post()
+    build_gate_bar()
+    build_sign("gate_sign", "CHECKPOINT")
+    build_sign("finish_sign", "FINISH", finish=True)
+    build_sign("start_sign", "START")
 
 
-def build_tree(name, seed, tall):
-    rnd = random.Random(seed)
-    h = 3.6 if tall else 2.4
-    parts = [cyl((0, 0, h / 2), 0.22, h, M["bark"], 8, r2=0.14)]
-    parts.append(cyl((0.25, 0, h * 0.62), 0.07, 1.0, M["bark"], 6, rot=(0, 0.8, 0)))
-    blobs = 7 if tall else 6
-    for i in range(blobs):
-        a = i / blobs * math.tau
-        rr = rnd.uniform(0.5, 0.9) if i else 0
-        z = h + rnd.uniform(-0.2, 0.7)
-        r = rnd.uniform(0.7, 1.0) * (1.0 if tall else 1.25)
-        m = M["leaf_hi"] if z > h + 0.35 else M["leaf"]
-        parts.append(ico((math.cos(a) * rr, math.sin(a) * rr, z), r, m, 2, scale=(1, 1, 0.8), smooth=False))
-    parts.append(ico((0, 0, h + 1.0), 0.8, M["leaf_hi"], 2, scale=(1, 1, 0.75)))
-    if tall:  # second, lower canopy tier like the key art
-        for i in range(4):
-            a = i / 4 * math.tau + 0.4
-            parts.append(ico((math.cos(a) * 0.9, math.sin(a) * 0.9, h * 0.62), 0.55, M["leaf_dk"], 2, scale=(1, 1, 0.7)))
+def build_tree_round(name="tree_round"):
+    """Puffy rounded tree: lumpy green crown on a curving brown trunk, ~4.4 high."""
+    pts = [(0, 0, 0), (0.15, 0.05, 0.9), (-0.1, 0.0, 1.8), (0.2, -0.05, 2.6), (0.05, 0, 3.2)]
+    parts = []
+    for i in range(len(pts) - 1):
+        parts.append(limb(pts[i], pts[i + 1], 0.3 - i * 0.045, 0.3 - (i + 1) * 0.045, M["trunk"], 8))
+    parts.append(limb(pts[2], (-0.75, 0.2, 2.7), 0.1, 0.06, M["trunk"], 6))
+    parts.append(limb(pts[3], (0.85, 0.1, 3.4), 0.1, 0.06, M["trunk"], 6))
+    parts.append(cyl((0.05, 0, 0.05), 0.42, 0.2, M["trunk"], 8))
+    blobs = [  # x, y, z, r, material
+        (0.0, 0.0, 3.6, 1.15, "leaf"),
+        (0.95, 0.2, 3.5, 0.85, "leaf"),
+        (-0.9, -0.2, 3.45, 0.85, "leaf_dk"),
+        (0.3, 0.85, 3.5, 0.8, "leaf"),
+        (-0.3, -0.85, 3.6, 0.8, "leaf_dk"),
+        (0.1, 0.1, 4.25, 0.95, "leaf_hi"),
+        (0.7, -0.5, 4.0, 0.7, "leaf_hi"),
+        (-0.65, 0.55, 4.0, 0.7, "leaf_hi"),
+    ]
+    for x, y, z, r, m in blobs:
+        parts.append(ico((x, y, z), r, M[m], 2, scale=(1, 1, 0.88), smooth=False))
     return join(name, parts)
 
 
@@ -398,32 +530,6 @@ def build_bush():
     for x, y, r, m in ((0, 0, 0.9, "leaf"), (0.7, 0.3, 0.6, "leaf_hi"), (-0.6, 0.4, 0.65, "leaf"), (0.1, -0.6, 0.6, "leaf_dk"), (0, 0, 0.6, "leaf_hi")):
         parts.append(ico((x, y, r * 0.7 + (0.5 if r == 0.6 and x == 0 else 0)), r, M[m], 2, scale=(1, 1, 0.85)))
     return join("bush", parts)
-
-
-def build_bamboo():
-    parts = []
-    for x, y, h in ((0, 0, 3.2), (0.3, 0.15, 2.6), (-0.15, 0.3, 2.9), (0.2, -0.25, 2.2)):
-        parts.append(cyl((x, y, h / 2), 0.09, h, M["bamboo"], 8))
-        for k in range(1, int(h / 0.7) + 1):
-            parts.append(cyl((x, y, k * 0.7), 0.1, 0.05, M["bamboo_node"], 8))
-        parts.append(cyl((x + 0.15, y, h * 0.8), 0.12, 0.02, M["leaf_hi"], 4, rot=(0, 0.5, 0.4), smooth=False))
-    return join("bamboo", parts)
-
-
-def build_reeds():
-    rnd = random.Random(4)
-    parts = []
-    for i in range(6):
-        x, y = rnd.uniform(-0.3, 0.3), rnd.uniform(-0.3, 0.3)
-        h = rnd.uniform(1.0, 1.6)
-        tilt = (rnd.uniform(-0.12, 0.12), rnd.uniform(-0.12, 0.12), 0)
-        parts.append(cyl((x, y, h / 2), 0.025, h, M["grass"], 5, rot=tilt))
-        if i % 2 == 0:
-            parts.append(cyl((x + tilt[1] * h, y - tilt[0] * h, h), 0.06, 0.3, M["cattail"], 8, rot=tilt))
-    for i in range(5):
-        a = i / 5 * math.tau
-        parts.append(cyl((math.cos(a) * 0.15, math.sin(a) * 0.15, 0.45), 0.08, 0.9, M["grass"], 3, rot=(math.sin(a) * 0.3, -math.cos(a) * 0.3, a), smooth=False, r2=0.0))
-    return join("reeds", parts)
 
 
 def build_fern():
@@ -448,43 +554,21 @@ def build_grass():
     return join("grass", parts)
 
 
-def build_lily():
-    pad = cyl((0, 0, 0.02), 0.6, 0.04, M["lily"], 16)
-    for v in pad.data.vertices:  # notch
-        if v.co.x > 0.3 and abs(v.co.y) < 0.25:
-            v.co.x *= 0.15
-    parts = [pad]
-    for i in range(6):
-        a = i / 6 * math.tau
-        p = sphere((math.cos(a) * 0.12, math.sin(a) * 0.12, 0.12), (0.14, 0.07, 0.1), M["petal"], 8, 4)
-        p.rotation_euler = (0, -0.6, a)
-        parts.append(p)
-    parts.append(sphere((0, 0, 0.12), (0.06, 0.06, 0.05), M["petal_c"], 8, 4))
-    return join("lily", parts)
-
-
-# ── build everything, laid out in a row for viewing (export zeroes positions) ──
-
-
 def build_all():
     kit_collection()
     palette()
     made = [
         build_raft(),
-        build_rim(),
-        build_rock(),
         build_spinner(),
-        build_tree("tree_a", 3, True),
-        build_tree("tree_b", 8, False),
+        build_sweeper(),
+        build_spike_strip(),
+        build_tree_round(),
         build_bush(),
-        build_bamboo(),
-        build_reeds(),
         build_fern(),
         build_grass(),
-        build_lily(),
     ]
     build_gate()
-    made += [bpy.data.objects[n] for n in ("gate_post", "gate_sign", "finish_sign")]
+    made += [bpy.data.objects[n] for n in ("gate_post", "gate_bar", "gate_sign", "finish_sign", "start_sign")]
     x = 0.0
     for o in made:
         o.location.x = x

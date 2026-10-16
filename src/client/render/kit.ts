@@ -52,39 +52,37 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
     });
     return g;
   },
-  rock: () => {
-    const m = mesh(new THREE.IcosahedronGeometry(1, 0), 0x6b6f78, 1);
-    return group(m);
-  },
-  rim: () => {
-    const m = mesh(new THREE.CylinderGeometry(0.35, 0.35, 2, 10), 0x5cc23a, 0.35);
-    m.rotation.z = Math.PI / 2;
-    return group(m);
-  },
   spinner: () => {
     const m = mesh(new THREE.CylinderGeometry(1, 1, 2, 12), 0x8d5524);
     m.rotation.z = Math.PI / 2;
     return group(m);
   },
-  gate_post: () => group(mesh(new THREE.BoxGeometry(0.3, 5, 0.3), 0xd9a066, 2.5)),
-  gate_sign: () => group(mesh(new THREE.BoxGeometry(6, 1.2, 0.2), 0xffe066)),
-  finish_sign: () => group(mesh(new THREE.BoxGeometry(6, 1.2, 0.2), 0xffffff)),
-  tree_a: () =>
+  gate_post: () => group(mesh(new THREE.BoxGeometry(0.4, 8.5, 0.4), 0xedb040, 4.25)),
+  gate_bar: () => group(mesh(new THREE.BoxGeometry(2, 0.4, 0.4), 0xedb040)),
+  gate_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0xe0502b)),
+  finish_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0xfff3d9)),
+  start_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0x3fc0b2)),
+  // Pivot at the origin end, arm along +x, 2 m long. Scaled (len / 2, 1, 1).
+  sweeper: () => {
+    const m = mesh(new THREE.BoxGeometry(2, 0.6, 0.6), 0xd8329a, 0.45);
+    m.position.x = 1;
+    return group(m);
+  },
+  // 2 m along x. Spikes point toward local -z (sim +y, the channel side).
+  spike_strip: () => {
+    const spike = mesh(new THREE.ConeGeometry(0.1, 0.32, 6), 0xfffdf4, 0.2);
+    spike.rotation.x = -Math.PI / 2;
+    spike.position.z = -0.35;
+    return group(mesh(new THREE.BoxGeometry(2, 0.5, 0.4), 0xb02fa8, 0.25), spike);
+  },
+  tree_round: () =>
     group(
-      mesh(new THREE.CylinderGeometry(0.25, 0.4, 3, 6), 0x8a5a44, 1.5),
-      mesh(new THREE.IcosahedronGeometry(1.8, 0), 0x3fae3a, 4.2),
-    ),
-  tree_b: () =>
-    group(
-      mesh(new THREE.CylinderGeometry(0.2, 0.35, 4, 6), 0xa8644a, 2),
-      mesh(new THREE.ConeGeometry(1.6, 3.5, 7), 0x2f9a45, 5),
+      mesh(new THREE.CylinderGeometry(0.2, 0.3, 3.2, 6), 0x7a4a38, 1.6),
+      mesh(new THREE.IcosahedronGeometry(1.5, 1), 0x3e9e2e, 3.9),
     ),
   bush: () => group(mesh(new THREE.IcosahedronGeometry(0.9, 0), 0x4bbf3f, 0.6)),
-  bamboo: () => group(mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.5, 6), 0x7ac943, 1.75)),
-  reeds: () => group(mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 4), 0x8cb34a, 0.8)),
   fern: () => group(mesh(new THREE.ConeGeometry(0.6, 0.8, 5), 0xc8d44a, 0.4)),
   grass: () => group(mesh(new THREE.ConeGeometry(0.2, 0.7, 4), 0x6cc24a, 0.35)),
-  lily: () => group(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.05, 12), 0x3a9a3a, 0.03)),
 };
 
 const FALLBACK = () => group(mesh(new THREE.BoxGeometry(1, 1, 1), 0xff00ff, 0.5));
