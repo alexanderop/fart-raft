@@ -1,0 +1,29 @@
+{
+  "name": "fart-raft",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "typecheck": "tsc && tsc -p tsconfig.sim.json",
+    "test": "vp test run",
+    "check": "vp check && tsc -p tsconfig.sim.json && vp test run",
+    "prepare": "vp config",
+    "fmt": "vp fmt",
+    "blender": "open -a Blender --args \"$PWD/assets-src/fart-raft.blend\" --python \"$PWD/assets-src/start_mcp.py\"",
+    "kit": "/Applications/Blender.app/Contents/MacOS/Blender -b assets-src/fart-raft.blend --python assets-src/build_kit.py --python assets-src/export_kit.py"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.21.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "~6.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  }
+}

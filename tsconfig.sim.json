@@ -1,0 +1,12 @@
+{
+  // Fitness function: sim/ must run on a Node server later.
+  // No DOM lib and no vite/client types, so `window`, `document` or `requestAnimationFrame` fail to compile here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": [],
+    "resolveJsonModule": true
+  },
+  "include": ["src/sim"],
+  "exclude": ["src/sim/**/*.test.ts"]
+}
