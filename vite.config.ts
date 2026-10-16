@@ -8,6 +8,7 @@ export default defineConfig({
   },
   fmt: {},
   lint: {
+    plugins: ["eslint", "typescript", "unicorn", "oxc", "import"],
     categories: {
       correctness: "error",
       suspicious: "warn",
@@ -25,9 +26,30 @@ export default defineConfig({
                   message: "sim/ is headless. Rendering lives in src/client.",
                 },
                 {
+                  group: ["effect", "effect/*", "@effect/*"],
+                  message: "sim/ is plain TypeScript. Effect lives in src/net and server/.",
+                },
+                {
                   group: ["**/client/**", "**/input/**", "**/net/**"],
                   message:
                     "sim/ must not import client, input or net. They depend on sim, not the other way round.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["src/client/**", "src/input/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                {
+                  group: ["effect", "effect/*", "@effect/*"],
+                  message:
+                    "Effect lives in src/net and server/. Reach the network through src/net/client.ts.",
                 },
               ],
             },
@@ -47,6 +69,9 @@ export default defineConfig({
     ],
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
+      "import/extensions": ["error", "always", { ignorePackages: true }],
+      "import/no-named-as-default-member": "off",
+      "import/no-unassigned-import": "off",
     },
   },
 });
