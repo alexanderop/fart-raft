@@ -1,10 +1,10 @@
 import * as THREE from "three";
-import { sampleChannel, type Sample } from "../../sim/channel";
-import type { Box, Channel, LevelData, Pose, SimEvent } from "../../sim/types";
-import { applyPose, poseMatrix } from "./coords";
-import { createGates } from "./gates";
-import type { Kit } from "./kit";
-import { createWind, type SwayOptions } from "./wind";
+import { sampleChannel, type Sample } from "../../sim/channel.ts";
+import type { Box, Channel, LevelData, Pose, SimEvent } from "../../sim/types.ts";
+import { applyPose, poseMatrix } from "./coords.ts";
+import { createGates } from "./gates.ts";
+import type { Kit } from "./kit.ts";
+import { createWind, type SwayOptions } from "./wind.ts";
 
 // Fart Together's look: the channel is cut into peach clay plateaus that float in a pale sky,
 // with coral cliffs dropping into the haze, a lime bumper rail on every bank and magenta spike

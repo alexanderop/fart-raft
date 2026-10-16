@@ -1,14 +1,14 @@
 import * as THREE from "three";
-import type { Zone } from "../../sim/constants";
-import type { LevelData, SimEvent, Snapshot } from "../../sim/types";
-import { applyPose, lerpPose } from "./coords";
-import { createSky, createWater, HAZE } from "./env";
-import { loadKit } from "./kit";
-import { createChaseCamera } from "./chaseCamera";
-import { createRaftMotion } from "./raftMotion";
-import { createRiderAnimator } from "./riders";
-import { buildTerrain } from "./terrain";
-import { createZoneMarks } from "./zones";
+import type { Zone } from "../../sim/constants.ts";
+import type { LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
+import { applyPose, lerpPose } from "./coords.ts";
+import { createSky, createWater, HAZE } from "./env.ts";
+import { loadKit } from "./kit.ts";
+import { createChaseCamera } from "./chaseCamera.ts";
+import { createRaftMotion } from "./raftMotion.ts";
+import { createRiderAnimator } from "./riders.ts";
+import { buildTerrain } from "./terrain.ts";
+import { createZoneMarks } from "./zones.ts";
 
 export type SceneView = {
   renderer: THREE.WebGLRenderer;

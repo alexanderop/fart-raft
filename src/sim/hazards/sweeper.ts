@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { SWEEP_AMPLITUDE } from "../constants";
-import type { HazardDef } from "../types";
-import type { Hazard } from "./index";
+import { SWEEP_AMPLITUDE } from "../constants.ts";
+import type { HazardDef } from "../types.ts";
+import type { Hazard } from "./index.ts";
 
 /** A bar hinged at one end on the bank that swings back and forth across the channel. */
 export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {

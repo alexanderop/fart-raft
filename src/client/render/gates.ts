@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import type { Box, LevelData, SimEvent } from "../../sim/types";
-import { applyPose } from "./coords";
-import type { Kit } from "./kit";
+import type { Box, LevelData, SimEvent } from "../../sim/types.ts";
+import { applyPose } from "./coords.ts";
+import type { Kit } from "./kit.ts";
 
 /** Crossbar height above the water. Matches BAR_Z in assets-src/build_kit.py (pole is 8.5 tall). */
 const BAR_Y = 7.4;

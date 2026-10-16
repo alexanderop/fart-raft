@@ -1,7 +1,7 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
-import type { HazardDef } from "../types";
-import { createSpinner } from "./spinner";
-import { createSweeper } from "./sweeper";
+import type { HazardDef } from "../types.ts";
+import { createSpinner } from "./spinner.ts";
+import { createSweeper } from "./sweeper.ts";
 
 /** Update Method: every hazard advances itself once per tick. */
 export type Hazard = {

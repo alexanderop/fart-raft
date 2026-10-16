@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { TICK_RATE } from "../../sim/constants";
-import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types";
-import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring";
+import { TICK_RATE } from "../../sim/constants.ts";
+import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring.ts";
 
 /**
  * Drives the four rider rigs (body → head, arm_l, arm_r) from SimEvents + Snapshots only.

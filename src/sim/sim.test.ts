@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import canyon from "../../courses/canyon.json";
 import pond from "../../courses/pond.json";
-import { nearestS, pointAt, sampleChannel } from "./channel";
+import { nearestS, pointAt, sampleChannel } from "./channel.ts";
 import {
   COUNTDOWN_TICKS,
   crewZones,
@@ -9,10 +9,10 @@ import {
   MAX_CREW,
   RIDER_RING,
   type Zone,
-} from "./constants";
-import { createSim, initPhysics, snapshot, step } from "./sim";
-import { parseLevel } from "./level";
-import { IDLE_INPUT, type SeatInput, type SimEvent } from "./types";
+} from "./constants.ts";
+import { createSim, initPhysics, snapshot, step } from "./sim.ts";
+import { parseLevel } from "./level.ts";
+import { IDLE_INPUT, type SeatInput, type SimEvent } from "./types.ts";
 
 const level = parseLevel(pond);
 const FULL = crewZones(MAX_CREW);

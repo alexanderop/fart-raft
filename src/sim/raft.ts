@@ -16,8 +16,8 @@ import {
   STEP,
   WALK_SPEED,
   type Zone,
-} from "./constants";
-import type { Pose, RiderPose, SeatInput, SimEvent, Vec2 } from "./types";
+} from "./constants.ts";
+import type { Pose, RiderPose, SeatInput, SimEvent, Vec2 } from "./types.ts";
 
 export type Raft = {
   body: RAPIER.RigidBody;

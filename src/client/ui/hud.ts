@@ -1,8 +1,8 @@
 import { Vector3, type PerspectiveCamera } from "three";
-import { nearestS, sampleChannel } from "../../sim/channel";
-import { GAS_MAX, TICK_RATE } from "../../sim/constants";
-import { SEAT_COLORS } from "../render/zones";
-import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types";
+import { nearestS, sampleChannel } from "../../sim/channel.ts";
+import { GAS_MAX, TICK_RATE } from "../../sim/constants.ts";
+import { SEAT_COLORS } from "../render/zones.ts";
+import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
 
 const LOW_GAS = 0.25;
 /** Fart events fire every tick while a seat farts. A gap longer than this starts a new puff. */

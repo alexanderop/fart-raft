@@ -1,5 +1,5 @@
-import { COUNTDOWN_TICKS, STEP } from "./constants";
-import type { Phase, SimEvent } from "./types";
+import { COUNTDOWN_TICKS, STEP } from "./constants.ts";
+import type { Phase, SimEvent } from "./types.ts";
 
 // State pattern, smallest form: a union plus a switch. Each phase carries only the data it needs.
 

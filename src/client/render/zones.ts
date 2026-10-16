@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RAFT_HULL, RAFT_RADIUS, type Zone } from "../../sim/constants";
+import { RAFT_HULL, RAFT_RADIUS, type Zone } from "../../sim/constants.ts";
 
 /** One color per seat, shared by the zone marks and the name tags. */
 export const SEAT_COLORS = ["#ff8a3d", "#3d9bff", "#b07cff", "#ffd23f"] as const;

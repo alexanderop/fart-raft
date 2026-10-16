@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { nearestS, pointAt, sampleChannel } from "../../sim/channel";
-import type { LevelData, Pose, Snapshot } from "../../sim/types";
-import { clamp, damp } from "./spring";
+import { nearestS, pointAt, sampleChannel } from "../../sim/channel.ts";
+import type { LevelData, Pose, Snapshot } from "../../sim/types.ts";
+import { clamp, damp } from "./spring.ts";
 
 /**
  * High three-quarter camera, like Fart Together: it hangs well above and behind the raft and

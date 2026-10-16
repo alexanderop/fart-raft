@@ -1,11 +1,11 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { CURRENT_SPEED, crewZones, MAX_CREW, STEP, type Zone } from "./constants";
-import { nearestS, pointAt, sampleChannel, type Sample } from "./channel";
-import { initialPhase, reachCheckpoint, tickPhase } from "./flow";
-import { createHazard, type Hazard } from "./hazards";
-import { buildLevel } from "./level";
-import { applyInputs, applyWaterDrag, createRaft, riderPose, type Raft } from "./raft";
-import type { LevelData, Phase, Pose, SeatInput, SimEvent, Snapshot, Vec2 } from "./types";
+import { CURRENT_SPEED, crewZones, MAX_CREW, STEP, type Zone } from "./constants.ts";
+import { nearestS, pointAt, sampleChannel, type Sample } from "./channel.ts";
+import { initialPhase, reachCheckpoint, tickPhase } from "./flow.ts";
+import { createHazard, type Hazard } from "./hazards/index.ts";
+import { buildLevel } from "./level.ts";
+import { applyInputs, applyWaterDrag, createRaft, riderPose, type Raft } from "./raft.ts";
+import type { LevelData, Phase, Pose, SeatInput, SimEvent, Snapshot, Vec2 } from "./types.ts";
 
 export type Sim = {
   world: RAPIER.World;

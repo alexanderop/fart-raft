@@ -1,4 +1,4 @@
-import { IDLE_INPUT, type SeatInput } from "../sim/types";
+import { IDLE_INPUT, type SeatInput } from "../sim/types.ts";
 
 /** Anything that can fill a seat: keyboard, gamepad, bot, or (later) a remote player. */
 export type InputSource = { read(): SeatInput };

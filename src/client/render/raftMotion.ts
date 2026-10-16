@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { STEP } from "../../sim/constants";
-import type { Pose, SimEvent, Snapshot } from "../../sim/types";
-import { clamp, damp, spring, stepSpring, wrapAngle } from "./spring";
+import { STEP } from "../../sim/constants.ts";
+import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import { clamp, damp, spring, stepSpring, wrapAngle } from "./spring.ts";
 
 /**
  * Visual-only raft motion: bobbing, banking, bump squash, nose lift. Written on top of the

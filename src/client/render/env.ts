@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CURRENT_SPEED } from "../../sim/constants";
+import { CURRENT_SPEED } from "../../sim/constants.ts";
 
 /** Pale sky haze: the fog color, and what the cliffs fade into far below. */
 export const HAZE = 0xeaf5fb;

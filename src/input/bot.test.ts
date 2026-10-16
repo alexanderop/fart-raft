@@ -1,12 +1,12 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import canyon from "../../courses/canyon.json";
 import pond from "../../courses/pond.json";
-import { crewZones, TICK_RATE } from "../sim/constants";
-import { parseLevel } from "../sim/level";
-import { createSim, initPhysics, snapshot, step } from "../sim/sim";
-import type { LevelData, SimEvent } from "../sim/types";
-import { botSource } from "./bot";
-import { createSeats, readSeats } from "./sources";
+import { crewZones, TICK_RATE } from "../sim/constants.ts";
+import { parseLevel } from "../sim/level.ts";
+import { createSim, initPhysics, snapshot, step } from "../sim/sim.ts";
+import type { LevelData, SimEvent } from "../sim/types.ts";
+import { botSource } from "./bot.ts";
+import { createSeats, readSeats } from "./sources.ts";
 
 /** Race a crew of bots headless, exactly as the client loop does: read seats → step → snapshot. */
 function race(level: LevelData, crewSize: number, seconds: number) {

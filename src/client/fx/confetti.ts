@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { applyPose } from "../render/coords";
+import { applyPose } from "../render/coords.ts";
 
 const CAPACITY = 480;
 const GRAVITY = 7;

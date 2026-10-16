@@ -1,4 +1,4 @@
-import { MAX_CREW } from "../../sim/constants";
+import { MAX_CREW } from "../../sim/constants.ts";
 
 /** What the start menu decides. Humans take the first seats; bots fill the rest when enabled. */
 export type GameConfig = { humans: number; bots: boolean };

@@ -1,6 +1,6 @@
-import { STEP, type Zone } from "../sim/constants";
-import { clampToZone } from "../sim/raft";
-import { levelWalls, nearestS, pointAt, sampleChannel } from "../sim/channel";
+import { STEP, type Zone } from "../sim/constants.ts";
+import { clampToZone } from "../sim/raft.ts";
+import { levelWalls, nearestS, pointAt, sampleChannel } from "../sim/channel.ts";
 import {
   IDLE_INPUT,
   type Box,
@@ -8,8 +8,8 @@ import {
   type SeatInput,
   type Snapshot,
   type Vec2,
-} from "../sim/types";
-import type { InputSource } from "./sources";
+} from "../sim/types.ts";
+import type { InputSource } from "./sources.ts";
 
 // A bot is just another InputSource: it reads the same Snapshot every client (and later the
 // server) has, and answers with a SeatInput. No DOM, no Rapier, so it runs headless on a server.

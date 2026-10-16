@@ -1,5 +1,5 @@
 import { Matrix4, Object3D } from "three";
-import type { Pose } from "../../sim/types";
+import type { Pose } from "../../sim/types.ts";
 
 // Sim is 2D (x, y) on the water plane. Three is Y-up, so sim (x, y) → three (x, 0, -y)
 // and sim rotation → rotation.y. Keep every conversion in this file.

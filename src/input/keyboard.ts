@@ -1,5 +1,5 @@
-import type { SeatInput } from "../sim/types";
-import type { InputSource } from "./sources";
+import type { SeatInput } from "../sim/types.ts";
+import type { InputSource } from "./sources.ts";
 
 /** Each action fires on any of its keys. */
 export type KeyBinding = {

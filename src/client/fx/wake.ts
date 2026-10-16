@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { RAFT_RADIUS } from "../../sim/constants";
-import type { Pose, SimEvent } from "../../sim/types";
-import { applyPose } from "../render/coords";
+import { RAFT_RADIUS } from "../../sim/constants.ts";
+import type { Pose, SimEvent } from "../../sim/types.ts";
+import { applyPose } from "../render/coords.ts";
 
 const WATER_Y = 0.045;
 const flat = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2);

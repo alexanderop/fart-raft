@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import type { Pose } from "../../sim/types";
-import { applyPose } from "./coords";
+import type { Pose } from "../../sim/types.ts";
+import { applyPose } from "./coords.ts";
 
 export type SwayOptions = {
   /** World height (above the instance origin) at which the full sway applies. */

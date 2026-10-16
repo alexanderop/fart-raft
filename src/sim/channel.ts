@@ -1,4 +1,4 @@
-import type { Box, Channel, LevelData, Vec2 } from "./types";
+import type { Box, Channel, LevelData, Vec2 } from "./types.ts";
 
 /** One point of the smoothed centerline: position, unit tangent, left normal, arc length. */
 export type Sample = Vec2 & { tx: number; ty: number; nx: number; ny: number; s: number };

@@ -1,5 +1,5 @@
 import { Vector3 } from "three";
-import type { SimEvent } from "../../sim/types";
+import type { SimEvent } from "../../sim/types.ts";
 
 const DECAY = 4; // trauma lost per second
 

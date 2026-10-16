@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { channelWalls } from "./channel";
-import type { Box, Channel, HazardDef, LevelData, Pose, Span, Vec2 } from "./types";
+import { channelWalls } from "./channel.ts";
+import type { Box, Channel, HazardDef, LevelData, Pose, Span, Vec2 } from "./types.ts";
 
 const BANK_RESTITUTION = 0.3;
 const SPIKE_RESTITUTION = 0.9;

@@ -1,15 +1,15 @@
 import "./style.css";
 import { Vector3 } from "three";
 import canyon from "../courses/canyon.json";
-import { startLoop } from "./client/loop";
-import { createCameraShake } from "./client/fx/cameraShake";
-import { createConfetti } from "./client/fx/confetti";
-import { createParticles } from "./client/fx/particles";
-import { createWake } from "./client/fx/wake";
-import { lerpPose } from "./client/render/coords";
-import { gateLayout } from "./client/render/gates";
-import { createScene } from "./client/render/scene";
-import { createHud, progressTrack } from "./client/ui/hud";
+import { startLoop } from "./client/loop.ts";
+import { createCameraShake } from "./client/fx/cameraShake.ts";
+import { createConfetti } from "./client/fx/confetti.ts";
+import { createParticles } from "./client/fx/particles.ts";
+import { createWake } from "./client/fx/wake.ts";
+import { lerpPose } from "./client/render/coords.ts";
+import { gateLayout } from "./client/render/gates.ts";
+import { createScene } from "./client/render/scene.ts";
+import { createHud, progressTrack } from "./client/ui/hud.ts";
 import {
   configFromUrl,
   configToSearch,
@@ -17,14 +17,14 @@ import {
   crewSize,
   showMenu,
   type GameConfig,
-} from "./client/ui/menu";
-import { botSource } from "./input/bot";
-import { keyboardSource, listenKeyboard, PLAYER_KEYS, WASD_OR_ARROWS } from "./input/keyboard";
-import { createSeats, readSeats, type InputSource } from "./input/sources";
-import { crewZones, STEP, type Zone } from "./sim/constants";
-import { createSim, initPhysics, snapshot, step } from "./sim/sim";
-import type { LevelData, SimEvent, Snapshot } from "./sim/types";
-import { parseLevel } from "./sim/level";
+} from "./client/ui/menu.ts";
+import { botSource } from "./input/bot.ts";
+import { keyboardSource, listenKeyboard, PLAYER_KEYS, WASD_OR_ARROWS } from "./input/keyboard.ts";
+import { createSeats, readSeats, type InputSource } from "./input/sources.ts";
+import { crewZones, STEP, type Zone } from "./sim/constants.ts";
+import { createSim, initPhysics, snapshot, step } from "./sim/sim.ts";
+import type { LevelData, SimEvent, Snapshot } from "./sim/types.ts";
+import { parseLevel } from "./sim/level.ts";
 
 const level = parseLevel(canyon);
 const app = document.querySelector<HTMLElement>("#app")!;

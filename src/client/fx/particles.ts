@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import type { SimEvent } from "../../sim/types";
-import { applyPose } from "../render/coords";
+import type { SimEvent } from "../../sim/types.ts";
+import { applyPose } from "../render/coords.ts";
 
 const CAPACITY = 384;
 const BUBBLES = 24;

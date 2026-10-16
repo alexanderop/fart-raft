@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import type { HazardDef } from "../types";
-import type { Hazard } from "./index";
+import type { HazardDef } from "../types.ts";
+import type { Hazard } from "./index.ts";
 
 /** A rotating log that swats the raft. `speed` is radians per second. */
 export function createSpinner(world: RAPIER.World, def: HazardDef): Hazard {
