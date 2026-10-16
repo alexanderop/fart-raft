@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import pond from "../../courses/pond.json";
-import { COUNTDOWN_TICKS, SEATS, SOLO_SEATS, type Seat } from "./constants";
+import { COUNTDOWN_TICKS, crewSeats, SEATS, type Seat } from "./constants";
 import { createSim, initPhysics, snapshot, step } from "./sim";
 import { parseLevel } from "./level";
 import { IDLE_INPUT, type SeatInput, type SimEvent } from "./types";
@@ -54,6 +54,7 @@ describe("given the pond course", () => {
   });
 
   describe("given a solo crew", () => {
+    const SOLO_SEATS = crewSeats(1);
     describe("when the one rider farts straight back", () => {
       it("should move the raft forward without turning", () => {
         const { snap } = run(COUNTDOWN_TICKS + 60, () => [{ thrust: true, aim: 0 }], SOLO_SEATS);

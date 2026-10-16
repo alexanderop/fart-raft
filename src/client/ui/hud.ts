@@ -20,7 +20,7 @@ export function createHud(host: HTMLElement, seatLabels: readonly string[]) {
       <div class="hud-finish" data-finish>
         <div class="finish-title">Finish!</div>
         <div class="finish-time" data-finish-time></div>
-        <div class="finish-hint">R to restart</div>
+        <div class="finish-hint">R to restart · Esc for menu</div>
       </div>
       <div class="hud-gas">${seatLabels
         .map((label, i) => `<div class="gas" data-seat="${i}"><span>${label}</span><i></i></div>`)

@@ -20,7 +20,7 @@ export type Sim = {
 /** Rapier ships as WASM. Call once before createSim, in the browser and in Node. */
 export const initPhysics = (): Promise<void> => RAPIER.init();
 
-/** `seats` is the crew layout: SEATS for co-op, SOLO_SEATS for single player. */
+/** `seats` is the crew layout from `crewSeats(n)`, one seat per rider (human or bot). */
 export function createSim(level: LevelData, seats: readonly Seat[] = SEATS): Sim {
   const world = new RAPIER.World({ x: 0, y: 0 }); // top-down: no gravity, water drag comes from damping
   world.timestep = STEP;

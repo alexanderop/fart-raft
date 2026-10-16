@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier2d-compat";
 import {
   ANGULAR_DAMPING,
   FART_FORCE,
+  SOLO_BOOST,
   GAS_DRAIN,
   GAS_MAX,
   GAS_REGEN,
@@ -57,7 +58,7 @@ export function applyInputs(raft: Raft, inputs: readonly SeatInput[], events: Si
     const dirY = Math.sin(dir);
     const x = pos.x + seat.x * cos - seat.y * sin;
     const y = pos.y + seat.x * sin + seat.y * cos;
-    const impulse = FART_FORCE * STEP;
+    const impulse = FART_FORCE * STEP * (raft.seats.length === 1 ? SOLO_BOOST : 1);
     raft.body.applyImpulseAtPoint({ x: dirX * impulse, y: dirY * impulse }, { x, y }, true);
     // The gas leaves opposite to the push.
     events.push({ type: "fart", seat: i, x, y, dirX: -dirX, dirY: -dirY });

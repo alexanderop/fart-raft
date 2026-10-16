@@ -81,7 +81,9 @@ public/models/  kit.glb: every visual asset, one top-level node per asset (see "
 ## Conventions
 
 - **Coordinates:** sim is 2D, `+x` = raft forward, `+y` = left. Three is Y-up: sim `(x, y)` → three `(x, 0, -y)`, sim `rot` → `rotation.y`. All conversion goes through `client/render/coords.ts`.
-- **Seats:** the crew layout is data passed to `createSim(level, seats)`. Single player (default) uses `SOLO_SEATS` (one rider, rear center). `?players=2` uses `SEATS`: `0` rear-left, `1` rear-right, `2` front-left, `3` front-right, where rear-left alone turns the raft clockwise.
+- **Seats:** the crew layout is data: `createSim(level, crewSeats(n))` for 1–4 riders. Every layout is balanced (1 = rear center, 2 = rear pair, 3 = rear pair + front center, 4 = `SEATS`: `0` rear-left, `1` rear-right, `2` front-left, `3` front-right). A lone rider gets `SOLO_BOOST`.
+- **Players:** the start menu (`client/ui/menu.ts`) picks humans (0–4) and whether bots fill empty seats; `?players=N&bots=0|1` skips it. Humans take the first seats (P1 WASD, P2 Arrows, P3 IJL, P4 Numpad 8/4/6; a single human gets WASD or Arrows), bots the rest.
+- **Bots** (`input/bot.ts`) are plain `InputSource`s that read the latest `Snapshot`, nothing else, so the server can run them unchanged. `bot.test.ts` races every crew size headless and must finish.
 - **Feel knobs** live in `sim/constants.ts` (`FART_FORCE`, damping, gas drain/regen). Tune on an empty pond before building courses.
 - **Course JSON** is always loaded through `parseLevel()`, never cast. New hazard kinds go in `HazardDef["kind"]`, `KINDS`, and the validator's `HAZARD_KINDS`.
 - Tests: BDD nesting (`describe('given …')` → `describe('when …')` → `it('should …')`), and run the real `step()` rather than mocking Rapier.
@@ -127,13 +129,14 @@ Done:
 - Pond test course: walls, rocks, spinner, 3 checkpoints, timer, gas bars, fart particles, camera shake
 - Fart Together look: kit.glb (raft, animals, rims, rocks, spinner, gates, decor), water shader, sky, clay plateaus, seeded decor scatter
 - Animation: riders turn their butts toward the exhaust, idle/cheer/bump reactions, raft bob/bank, chase camera, wind sway, wake/ripples, gate bulbs + confetti, animated HUD
-- Single player: one capybara, WASD or Arrows. `?players=2` = couch co-op
-- 8 sim tests (countdown, thrust, turning, solo crew, determinism, headless, level validation)
+- Start menu: 0–4 players, optional bots in empty seats, Esc back to menu
+- Bot `InputSource` (snapshot-driven, headless, stuck recovery); bots finish the pond with every crew size
+- 12 tests: sim (countdown, thrust, turning, solo crew, determinism, headless, level validation) + bot races for crews 1–4
+- GitHub Pages deploy on push to `main`: https://alexanderop.github.io/fart-raft/
 
 Next, in order:
 
 1. Tune feel (`FART_FORCE`, damping, gas) on the pond
 2. Blender: course export script (LevelData JSON from `col_*` / `checkpoint_NN` names), first real course
 3. Audio (fart and bump sounds from `SimEvent`s), gamepad input
-4. Bot `InputSource` for empty seats in single player
-5. Multiplayer: `server/` running `src/sim`, clients send `SeatInput`, server broadcasts `Snapshot` + `SimEvent[]` ~20 Hz, clients interpolate. No client prediction at first (shared raft hides ~100 ms).
+4. Multiplayer: `server/` running `src/sim`, clients send `SeatInput`, server broadcasts `Snapshot` + `SimEvent[]` ~20 Hz, clients interpolate. No client prediction at first (shared raft hides ~100 ms).

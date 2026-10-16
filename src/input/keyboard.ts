@@ -1,3 +1,4 @@
+import { AIM_LIMIT, AIM_SPEED } from "../sim/constants";
 import type { SeatInput } from "../sim/types";
 import type { InputSource } from "./sources";
 
@@ -10,15 +11,16 @@ export const ARROWS: KeyBinding = {
   left: ["ArrowLeft"],
   right: ["ArrowRight"],
 };
+export const IJL: KeyBinding = { thrust: ["KeyI"], left: ["KeyJ"], right: ["KeyL"] };
+export const NUMPAD: KeyBinding = { thrust: ["Numpad8"], left: ["Numpad4"], right: ["Numpad6"] };
+/** Couch co-op bindings by player index (P1…P4) on one keyboard. */
+export const PLAYER_KEYS = [WASD, ARROWS, IJL, NUMPAD] as const;
 /** Single player plays on either cluster. */
 export const WASD_OR_ARROWS: KeyBinding = {
   thrust: [...WASD.thrust, ...ARROWS.thrust],
   left: [...WASD.left, ...ARROWS.left],
   right: [...WASD.right, ...ARROWS.right],
 };
-
-const AIM_LIMIT = Math.PI / 3; // nozzle swings ±60° from straight back
-const AIM_SPEED = 3; // radians per second
 
 const held = new Set<string>();
 const anyHeld = (codes: readonly string[]) => codes.some((c) => held.has(c));
