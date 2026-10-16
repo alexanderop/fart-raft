@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
+import canyon from "../../courses/canyon.json";
 import pond from "../../courses/pond.json";
+import { nearestS, pointAt, sampleChannel } from "./channel";
 import { COUNTDOWN_TICKS, crewSeats, SEATS, type Seat } from "./constants";
 import { createSim, initPhysics, snapshot, step } from "./sim";
 import { parseLevel } from "./level";
@@ -90,5 +92,28 @@ describe("given a broken course export", () => {
   it("should reject an unknown hazard kind", () => {
     const broken = { ...pond, hazards: [{ ...pond.hazards[0], kind: "shark" }] };
     expect(() => parseLevel(broken)).toThrow(/bad hazards/);
+  });
+
+  it("should reject a channel with a single control point", () => {
+    const broken = { ...canyon, channel: { ...canyon.channel, points: [{ x: 0, y: 0 }] } };
+    expect(() => parseLevel(broken)).toThrow(/bad channel/);
+  });
+});
+
+describe("given the canyon course", () => {
+  const canyonLevel = parseLevel(canyon);
+
+  describe("when the full crew farts straight ahead into the first bend", () => {
+    it("should keep the raft inside the banks", () => {
+      const allThrust = SEATS.map(() => ({ thrust: true, aim: 0 }));
+      const sim = createSim(canyonLevel, SEATS);
+      for (let t = 0; t < COUNTDOWN_TICKS + 8 * 60; t++) step(sim, allThrust);
+      const { raft } = snapshot(sim);
+      const route = sampleChannel(canyonLevel.channel!);
+      const s = nearestS(route, raft);
+      const center = pointAt(route, s);
+      expect(Math.hypot(raft.x - center.x, raft.y - center.y)).toBeLessThan(6);
+      expect(s).toBeGreaterThan(20);
+    });
   });
 });

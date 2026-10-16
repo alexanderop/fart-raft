@@ -1,5 +1,9 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import type { Box, HazardDef, LevelData, Pose } from "./types";
+import { channelWalls } from "./channel";
+import type { Box, Channel, HazardDef, LevelData, Pose, Span, Vec2 } from "./types";
+
+const BANK_RESTITUTION = 0.3;
+const SPIKE_RESTITUTION = 0.9;
 
 function boxCollider(b: Box): RAPIER.ColliderDesc {
   return RAPIER.ColliderDesc.cuboid(b.hx, b.hy).setTranslation(b.x, b.y).setRotation(b.rot);
@@ -7,7 +11,12 @@ function boxCollider(b: Box): RAPIER.ColliderDesc {
 
 /** Build static geometry from LevelData. Returns collider handle → checkpoint index. */
 export function buildLevel(world: RAPIER.World, level: LevelData): Map<number, number> {
-  for (const wall of level.walls) world.createCollider(boxCollider(wall).setRestitution(0.3));
+  for (const wall of level.walls)
+    world.createCollider(boxCollider(wall).setRestitution(BANK_RESTITUTION));
+  for (const wall of level.channel ? channelWalls(level.channel) : [])
+    world.createCollider(
+      boxCollider(wall).setRestitution(wall.spiky ? SPIKE_RESTITUTION : BANK_RESTITUTION),
+    );
 
   const checkpointByHandle = new Map<number, number>();
   level.checkpoints.forEach((cp, i) => {
@@ -17,7 +26,7 @@ export function buildLevel(world: RAPIER.World, level: LevelData): Map<number, n
   return checkpointByHandle;
 }
 
-const HAZARD_KINDS: readonly string[] = ["spinner"] satisfies HazardDef["kind"][];
+const HAZARD_KINDS: readonly string[] = ["spinner", "sweeper"] satisfies HazardDef["kind"][];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const hasNums = (v: Record<string, unknown>, keys: readonly string[]) =>
@@ -36,16 +45,26 @@ const isHazard = (v: unknown): v is HazardDef =>
   HAZARD_KINDS.includes(v.kind);
 const isList = <T>(v: unknown, item: (x: unknown) => x is T): v is T[] =>
   Array.isArray(v) && v.every(item);
+const isVec2 = (v: unknown): v is Vec2 => isObject(v) && hasNums(v, ["x", "y"]);
+const isSpan = (v: unknown): v is Span =>
+  isObject(v) && hasNums(v, ["from", "to"]) && (v.side === "left" || v.side === "right");
+const isChannel = (v: unknown): v is Channel =>
+  isObject(v) &&
+  hasNums(v, ["halfWidth"]) &&
+  isList(v.points, isVec2) &&
+  v.points.length >= 2 &&
+  isList(v.spikes, isSpan);
 
 /** Validate a course JSON (hand-written or exported from Blender). Throws with the first bad field. */
 export function parseLevel(data: unknown): LevelData {
   if (!isObject(data)) throw new Error("level: not an object");
-  const { name, spawn, walls, checkpoints, hazards } = data;
+  const { name, spawn, channel = null, walls, checkpoints, hazards } = data;
   if (typeof name !== "string") throw new Error("level: name must be a string");
   if (!isPose(spawn)) throw new Error(`level ${name}: bad spawn`);
+  if (channel !== null && !isChannel(channel)) throw new Error(`level ${name}: bad channel`);
   if (!isList(walls, isBox)) throw new Error(`level ${name}: bad walls`);
   if (!isList(checkpoints, isBox) || checkpoints.length === 0)
     throw new Error(`level ${name}: needs at least one checkpoint`);
   if (!isList(hazards, isHazard)) throw new Error(`level ${name}: bad hazards`);
-  return { name, spawn, walls, checkpoints, hazards };
+  return { name, spawn, channel, walls, checkpoints, hazards };
 }

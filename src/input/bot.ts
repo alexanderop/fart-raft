@@ -1,5 +1,13 @@
 import { AIM_LIMIT, AIM_SPEED, GAS_MAX, STEP, type Seat } from "../sim/constants";
-import { IDLE_INPUT, type Box, type LevelData, type SeatInput, type Snapshot } from "../sim/types";
+import { levelWalls, nearestS, pointAt, sampleChannel } from "../sim/channel";
+import {
+  IDLE_INPUT,
+  type Box,
+  type LevelData,
+  type SeatInput,
+  type Snapshot,
+  type Vec2,
+} from "../sim/types";
 import type { InputSource } from "./sources";
 
 // A bot is just another InputSource: it reads the same Snapshot every client (and later the
@@ -27,8 +35,14 @@ const GAS_RESUME = 0.5; // …until the tank is back to this
 // Fart whenever the best nozzle angle helps at all. A higher bar deadlocks a solo rider, which
 // often can't push forward and turn the right way at once.
 const MIN_SCORE = 0.02;
+// Facing far off course, turning is worth a little backward push: otherwise a solo rider
+// pinned on a bend sits forever because every nozzle angle scores below zero.
+const MUST_TURN = 0.9;
 
-type Vec = { x: number; y: number };
+type Vec = Vec2;
+
+/** On a channel course, steer at the centerline this far ahead instead of straight at the gate. */
+const ROUTE_LOOKAHEAD = 9;
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -48,7 +62,13 @@ function awayFromBox(b: Box, p: Vec): { x: number; y: number; dist: number } {
 }
 
 /** Desired push direction in world space: toward the next gate, away from walls, minus drift. */
-function desiredForce(level: LevelData, snap: Snapshot, vel: Vec, target: Box, t: BotTuning): Vec {
+function desiredForce(
+  walls: readonly Box[],
+  snap: Snapshot,
+  vel: Vec,
+  target: Vec,
+  t: BotTuning,
+): Vec {
   const { raft } = snap;
   const tx = target.x - raft.x;
   const ty = target.y - raft.y;
@@ -64,7 +84,7 @@ function desiredForce(level: LevelData, snap: Snapshot, vel: Vec, target: Box, t
     raft,
     { x: raft.x + vel.x * t.avoidLookahead, y: raft.y + vel.y * t.avoidLookahead },
   ];
-  for (const wall of level.walls) {
+  for (const wall of walls) {
     for (const p of probes) {
       const away = awayFromBox(wall, p);
       if (away.dist >= t.avoidRange || away.dist === 0) continue;
@@ -98,13 +118,13 @@ const STUCK_AFTER = 1; // …for this many seconds
 const ESCAPE_FOR = 1.5; // then back off the nearest obstacle for this long
 
 /** Back off the closest wall while sliding along it toward the gate. */
-function escapeForce(level: LevelData, snap: Snapshot, target: Box, t: BotTuning): Vec {
+function escapeForce(walls: readonly Box[], snap: Snapshot, target: Vec, t: BotTuning): Vec {
   const { raft } = snap;
   const tx = target.x - raft.x;
   const ty = target.y - raft.y;
   const tLen = Math.hypot(tx, ty) || 1;
   let nearest: { x: number; y: number; dist: number } | undefined;
-  for (const wall of level.walls) {
+  for (const wall of walls) {
     const away = awayFromBox(wall, raft);
     if (away.dist > 0 && (!nearest || away.dist < nearest.dist)) nearest = away;
   }
@@ -139,6 +159,8 @@ export function botSource(
   tuning: BotTuning = DEFAULT_TUNING,
 ): InputSource {
   const seat = seats[seatIndex]!;
+  const walls = levelWalls(level);
+  const route = level.channel ? sampleChannel(level.channel) : null;
   let last: Snapshot | undefined;
   let aim = 0;
   let resting = false;
@@ -151,10 +173,11 @@ export function botSource(
       const prev = last?.tick === snap.tick - 1 ? last : undefined;
       last = snap;
       if (snap.phase.kind !== "racing") return IDLE_INPUT;
-      const target = level.checkpoints[snap.phase.nextCheckpoint];
-      if (!target) return IDLE_INPUT;
+      const gate = level.checkpoints[snap.phase.nextCheckpoint];
+      if (!gate) return IDLE_INPUT;
 
       const { raft } = snap;
+      const target = route ? pointAt(route, nearestS(route, raft) + ROUTE_LOOKAHEAD) : gate;
       const vel = prev
         ? { x: (raft.x - prev.raft.x) / STEP, y: (raft.y - prev.raft.y) / STEP }
         : { x: 0, y: 0 };
@@ -172,8 +195,8 @@ export function botSource(
 
       const escaping = escapeLeft > 0;
       const force = escaping
-        ? escapeForce(level, snap, target, tuning)
-        : desiredForce(level, snap, vel, target, tuning);
+        ? escapeForce(walls, snap, target, tuning)
+        : desiredForce(walls, snap, vel, target, tuning);
       const fLen = Math.hypot(force.x, force.y);
       const headingErr = wrap(Math.atan2(force.y, force.x) - raft.rot);
       // While escaping, just translate: turning against a bank only pins the raft harder,
@@ -209,7 +232,8 @@ export function botSource(
       if (gas < GAS_RESERVE) resting = true;
       else if (gas > GAS_RESUME) resting = false;
 
-      return { thrust: !resting && bestScore > MIN_SCORE, aim };
+      const helps = bestScore > MIN_SCORE || Math.abs(torqueWant) > MUST_TURN;
+      return { thrust: !resting && helps, aim };
     },
   };
 }

@@ -1,0 +1,9 @@
+{
+  // Node build scripts: no DOM, Node types.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["."]
+}

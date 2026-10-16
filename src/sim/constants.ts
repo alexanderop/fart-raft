@@ -45,4 +45,7 @@ export const GAS_MAX = 100;
 export const GAS_DRAIN = 50; // per second while farting
 export const GAS_REGEN = 30; // per second while not farting
 
+/** How far a sweeper swings either side of its rest angle, radians. */
+export const SWEEP_AMPLITUDE = Math.PI / 4;
+
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;

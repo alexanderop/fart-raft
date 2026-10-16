@@ -1,6 +1,7 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
 import type { HazardDef } from "../types";
 import { createSpinner } from "./spinner";
+import { createSweeper } from "./sweeper";
 
 /** Update Method: every hazard advances itself once per tick. */
 export type Hazard = {
@@ -15,6 +16,7 @@ export type Hazard = {
  */
 const KINDS: Record<HazardDef["kind"], (world: RAPIER.World, def: HazardDef) => Hazard> = {
   spinner: createSpinner,
+  sweeper: createSweeper,
 };
 
 export function createHazard(world: RAPIER.World, def: HazardDef): Hazard {

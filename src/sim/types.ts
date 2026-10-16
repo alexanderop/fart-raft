@@ -37,11 +37,29 @@ export type Snapshot = {
 
 export type Box = { x: number; y: number; rot: number; hx: number; hy: number };
 
-export type HazardDef = { id: string; kind: "spinner"; speed: number } & Box;
+export type Vec2 = { x: number; y: number };
+
+/**
+ * Spinner: a bar rotating about its center at `speed` rad/s.
+ * Sweeper: a bar pivoting at (x, y), arm of length 2·hx along `rot`, swinging ±SWEEP_AMPLITUDE
+ * with angular frequency `speed`.
+ */
+export type HazardDef = { id: string; kind: "spinner" | "sweeper"; speed: number } & Box;
+
+/** A stretch of spiked bank, by arc length (m) along the channel's centerline. */
+export type Span = { side: "left" | "right"; from: number; to: number };
+
+/**
+ * Most of a course is one winding channel: control points of its centerline and a constant
+ * half-width. The banks (colliders and visuals) are derived from it, see sim/channel.ts.
+ */
+export type Channel = { halfWidth: number; points: Vec2[]; spikes: Span[] };
 
 export type LevelData = {
   name: string;
   spawn: Pose;
+  channel: Channel | null;
+  /** Extra static boxes: islands, or a whole course's banks when there is no channel. */
   walls: Box[];
   /** In race order. The last one is the finish line. */
   checkpoints: Box[];
