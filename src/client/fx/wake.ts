@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RAFT_HALF } from "../../sim/constants";
+import { RAFT_RADIUS } from "../../sim/constants";
 import type { Pose, SimEvent } from "../../sim/types";
 import { applyPose } from "../render/coords";
 
@@ -141,12 +141,15 @@ export function createWake(scene: THREE.Scene) {
     },
     update(dt: number, raft: Pose) {
       fartCooldown.forEach((_, i) => (fartCooldown[i] = Math.max(0, fartCooldown[i]! - dt)));
-      const moved = last ? Math.hypot(raft.x - last.x, raft.y - last.y) : 0;
+      const mx = last ? raft.x - last.x : 0;
+      const my = last ? raft.y - last.y : 0;
+      const moved = Math.hypot(mx, my);
       const speed = dt > 0 ? moved / dt : 0;
       last = { ...raft };
 
-      const fx = Math.cos(raft.rot);
-      const fy = Math.sin(raft.rot);
+      // The raft is round and spins freely, so the wake follows where it travels, not its nose.
+      const fx = moved > 1e-6 ? mx / moved : Math.cos(raft.rot);
+      const fy = moved > 1e-6 ? my / moved : Math.sin(raft.rot);
       const lx = -fy;
       const ly = fx;
       travelled += moved;
@@ -158,8 +161,8 @@ export function createWake(scene: THREE.Scene) {
         for (const side of [-1, 1]) {
           // Stern: the wake widens into a V as the blobs drift outward.
           foam.spawn({
-            x: raft.x - fx * RAFT_HALF.x + lx * RAFT_HALF.y * 0.9 * side,
-            y: raft.y - fy * RAFT_HALF.x + ly * RAFT_HALF.y * 0.9 * side,
+            x: raft.x - fx * RAFT_RADIUS * 0.8 + lx * RAFT_RADIUS * 0.6 * side,
+            y: raft.y - fy * RAFT_RADIUS * 0.8 + ly * RAFT_RADIUS * 0.6 * side,
             vx: lx * spread * side,
             vy: ly * spread * side,
             radius,
@@ -168,8 +171,8 @@ export function createWake(scene: THREE.Scene) {
           });
           // Bow: a smaller, shorter curl pushed out sideways.
           foam.spawn({
-            x: raft.x + fx * RAFT_HALF.x * 0.9 + lx * RAFT_HALF.y * 0.6 * side,
-            y: raft.y + fy * RAFT_HALF.x * 0.9 + ly * RAFT_HALF.y * 0.6 * side,
+            x: raft.x + fx * RAFT_RADIUS * 0.75 + lx * RAFT_RADIUS * 0.66 * side,
+            y: raft.y + fy * RAFT_RADIUS * 0.75 + ly * RAFT_RADIUS * 0.66 * side,
             vx: lx * spread * 1.3 * side,
             vy: ly * spread * 1.3 * side,
             radius: radius * 0.6,

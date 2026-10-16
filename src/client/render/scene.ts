@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Seat } from "../../sim/constants";
+import type { Zone } from "../../sim/constants";
 import type { LevelData, SimEvent, Snapshot } from "../../sim/types";
 import { applyPose, lerpPose } from "./coords";
 import { createSky, createWater, HAZE } from "./env";
@@ -8,6 +8,7 @@ import { createChaseCamera } from "./chaseCamera";
 import { createRaftMotion } from "./raftMotion";
 import { createRiderAnimator } from "./riders";
 import { buildTerrain } from "./terrain";
+import { createZoneMarks } from "./zones";
 
 export type SceneView = {
   renderer: THREE.WebGLRenderer;
@@ -23,7 +24,7 @@ const SUN_OFFSET = new THREE.Vector3(22, 40, 12);
 export async function createScene(
   canvasHost: HTMLElement,
   level: LevelData,
-  seats: readonly Seat[],
+  zones: readonly Zone[],
 ): Promise<SceneView> {
   const kit = await loadKit();
 
@@ -70,9 +71,10 @@ export async function createScene(
   );
 
   const raft = kit.clone("raft");
+  raft.add(createZoneMarks(zones));
   scene.add(raft);
 
-  const riders = createRiderAnimator(raft, level, seats);
+  const riders = createRiderAnimator(raft, level, zones.length);
   const motion = createRaftMotion(raft);
   const chase = createChaseCamera(level);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 700);
@@ -103,7 +105,7 @@ export async function createScene(
       const pose = lerpPose(prev.raft, curr.raft, alpha);
       applyPose(raft, pose);
       motion.update(dt, now, prev, curr, pose);
-      riders.update(dt, now, prev, curr, pose);
+      riders.update(dt, now, prev, curr, alpha, pose);
       curr.hazards.forEach((h, i) => {
         const def = level.hazards.find((d) => d.id === h.id);
         const mesh = hazardMeshes.get(h.id);

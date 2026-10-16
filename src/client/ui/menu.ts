@@ -3,7 +3,7 @@ import { MAX_CREW } from "../../sim/constants";
 /** What the start menu decides. Humans take the first seats; bots fill the rest when enabled. */
 export type GameConfig = { humans: number; bots: boolean };
 
-export const CONTROLS = ["WASD", "Arrows", "I J L", "Num 8 4 6"] as const;
+export const CONTROLS = ["WASD · Space", "Arrows · Enter", "IJKL · U", "Num 8456 · Num 0"] as const;
 
 const STORAGE_KEY = "fart-raft:menu";
 
@@ -98,7 +98,7 @@ export function showMenu(host: HTMLElement): Promise<GameConfig> {
     const size = crewSize(config);
     seats.innerHTML = Array.from({ length: size }, (_, i) => {
       if (i >= config.humans) return `<li class="bot">Bot</li>`;
-      const keys = config.humans === 1 ? "WASD or Arrows" : CONTROLS[i];
+      const keys = config.humans === 1 ? "WASD / Arrows · Space" : CONTROLS[i];
       return `<li><b>P${i + 1}</b> ${keys}</li>`;
     }).join("");
   };

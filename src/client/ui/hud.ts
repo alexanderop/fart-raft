@@ -1,13 +1,14 @@
 import { Vector3, type PerspectiveCamera } from "three";
 import { nearestS, sampleChannel } from "../../sim/channel";
-import { GAS_MAX, TICK_RATE, type Seat } from "../../sim/constants";
+import { GAS_MAX, TICK_RATE } from "../../sim/constants";
+import { SEAT_COLORS } from "../render/zones";
 import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types";
 
 const LOW_GAS = 0.25;
 /** Fart events fire every tick while a seat farts. A gap longer than this starts a new puff. */
 const PUFF_GAP_TICKS = 6;
 /** Height above the water where the name tag floats, in meters. */
-const TAG_HEIGHT = 2.4;
+const TAG_HEIGHT = 2.9;
 
 const CLOCK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M12 7v5.5l3.5 2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PUFF_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.4 8.9a4.8 4.8 0 0 1 .1 9.6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>`;
@@ -76,13 +77,12 @@ export function progressTrack(level: LevelData): ProgressTrack {
 
 export type HudOptions = {
   seatLabels: readonly string[];
-  seats: readonly Seat[];
   camera: PerspectiveCamera;
   progress: ProgressTrack;
 };
 
 export function createHud(host: HTMLElement, opts: HudOptions) {
-  const { seatLabels, seats, camera, progress } = opts;
+  const { seatLabels, camera, progress } = opts;
   const { markers } = progress;
   host.insertAdjacentHTML(
     "beforeend",
@@ -102,7 +102,10 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         <div class="finish-hint">R to restart · Esc for menu</div>
       </div>
       <div class="hud-tags">${seatLabels
-        .map((label, i) => `<div class="tag" data-seat="${i}"><span>${label}</span><i></i></div>`)
+        .map(
+          (label, i) =>
+            `<div class="tag" data-seat="${i}" style="--seat:${SEAT_COLORS[i]}"><span>${label}</span><i></i></div>`,
+        )
         .join("")}</div>
     </div>`,
   );
@@ -124,8 +127,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
 
   let shownCount = "";
   let puffCount = 0;
-  const fartedThisFrame = seats.map(() => false);
-  const lastFartTick = seats.map(() => -Infinity);
+  const fartedThisFrame = seatLabels.map(() => false);
+  const lastFartTick = seatLabels.map(() => -Infinity);
   const world = new Vector3();
 
   status.addEventListener("animationend", () => status.classList.remove("pop"));
@@ -161,13 +164,14 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
     }
   }
 
-  function placeTags(raft: Pose) {
+  function placeTags(raft: Pose, riders: Snapshot["riders"]) {
     const cos = Math.cos(raft.rot);
     const sin = Math.sin(raft.rot);
     tags.forEach((tag, i) => {
-      const seat = seats[i]!;
-      const sx = raft.x + seat.x * cos - seat.y * sin;
-      const sy = raft.y + seat.x * sin + seat.y * cos;
+      const rider = riders[i];
+      if (!rider) return;
+      const sx = raft.x + rider.x * cos - rider.y * sin;
+      const sy = raft.y + rider.x * sin + rider.y * cos;
       world.set(sx, TAG_HEIGHT, -sy).project(camera);
       const visible = world.z < 1;
       tag.style.visibility = visible ? "visible" : "hidden";
@@ -227,7 +231,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         tags[i]!.classList.toggle("draining", gas < lastGas[i]! - 1e-6);
         lastGas[i] = gas;
       });
-      placeTags(raft);
+      placeTags(raft, snap.riders);
     },
   };
 }

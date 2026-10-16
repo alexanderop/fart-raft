@@ -231,10 +231,12 @@ ANIMALS = [  # seat order: rear-left, rear-right, front-left, front-right
     ("hippo", 0x8B7FB8, 0xC4B9E3),
     ("croc", 0x5DB548, 0xD8E67E),
 ]
+RAFT_RADIUS = 2.1  # sim RAFT_RADIUS: outer edge of the ring
+TUBE = 0.32  # ring tube radius
+RING_R = RAFT_RADIUS - TUBE  # ring center line
 RING_Z = 0.62  # top tube center
-RIDER_Z = 0.86  # riders sit on the rim
-RIDER_INSET = 0.75  # pull riders onto the ring tube (sim seats sit near its outer edge)
-RIDER_SCALE = 1.3  # read well from the chase camera
+RIDER_Z = -0.45  # riders wade outside the ring, feet in the water
+RIDER_SCALE = 1.7  # chunky riders that fill the deck, like Fart Together
 NECK = (0.05, 0.0, 0.78)  # head pivot, rider space before RIDER_SCALE
 SHOULDER = (0.12, 0.3, 0.64)  # arm pivot (mirrored in y)
 
@@ -309,28 +311,27 @@ def capybara(body, belly):
 
 def build_raft():
     """Round inflatable ring: lime tube on a green tube, red-orange trim band, planked green floor."""
-    lower = torus((0, 0, 0.22), 1.12, 0.3, M["ring_low"], scale=(1, 0.8, 1))
-    upper = torus((0, 0, RING_Z), 1.1, 0.3, M["ring"], scale=(1, 0.8, 1))
-    stripe = torus((0, 0, RING_Z + 0.02), 1.1, 0.318, M["ring_stripe"], scale=(1, 0.8, 0.4), mseg=12)
-    floor = cyl((0, 0, 0.32), 1.15, 0.14, M["floor"], 32)
-    floor.scale = (1, 0.8, 1)
+    lower = torus((0, 0, 0.22), RING_R + 0.02, TUBE, M["ring_low"], seg=48)
+    upper = torus((0, 0, RING_Z), RING_R, TUBE, M["ring"], seg=48)
+    stripe = torus((0, 0, RING_Z + 0.02), RING_R, TUBE + 0.018, M["ring_stripe"], scale=(1, 1, 0.4), seg=48, mseg=12)
+    floor = cyl((0, 0, 0.32), RING_R + 0.05, 0.14, M["floor"], 48)
     parts = [lower, upper, stripe, floor]
-    for k in range(-3, 4):  # plank seams along x, clipped to the floor ellipse
-        y = k * 0.24
-        half = 1.1 * math.sqrt(max(0.0, 1 - (y / 0.88) ** 2)) - 0.05
+    for k in range(-8, 9):  # plank seams along x, clipped to the floor circle
+        y = k * 0.26
+        half = RING_R * math.sqrt(max(0.0, 1 - (y / RING_R) ** 2)) - 0.05
         if half > 0.2:
             parts.append(box((0, y, 0.395), (half * 2, 0.025, 0.012), M["floor_line"]))
-    for i in range(10):  # red rope handles on the lower ring
-        a = i / 10 * math.tau + 0.3
-        x, y = math.cos(a) * 1.42, math.sin(a) * 1.42 * 0.8
-        parts.append(torus((x, y, 0.22), 0.11, 0.03, M["rope"], rot=(math.pi / 2, 0, a + math.pi / 2), seg=12, mseg=5))
+    for i in range(16):  # red rope handles on the lower ring
+        a = i / 16 * math.tau + 0.2
+        x, y = math.cos(a) * (RAFT_RADIUS + 0.02), math.sin(a) * (RAFT_RADIUS + 0.02)
+        parts.append(torus((x, y, 0.22), 0.13, 0.035, M["rope"], rot=(math.pi / 2, 0, a + math.pi / 2), seg=12, mseg=5))
     raft = join("raft", parts)
     builders = {"hippo": hippo, "croc": croc, "capybara": capybara}
     for i, ((sx, sy), (kind, body, belly)) in enumerate(zip(SEATS, ANIMALS)):
         mb = mat(f"rider_{i}", body, 0.55)
         ml = mat(f"rider_{i}_belly", belly, 0.6)
         parts = builders[kind](mb, ml)
-        loc = Vector((sx * RIDER_INSET, sy * RIDER_INSET, RIDER_Z))
+        loc = Vector((sx, sy, RIDER_Z))  # the client moves riders around the deck
         for p in parts:
             p.location = loc + p.location * RIDER_SCALE
             p.scale *= RIDER_SCALE

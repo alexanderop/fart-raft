@@ -1,15 +1,18 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { SEATS, STEP, type Seat } from "./constants";
+import { CURRENT_SPEED, crewZones, MAX_CREW, STEP, type Zone } from "./constants";
+import { nearestS, pointAt, sampleChannel, type Sample } from "./channel";
 import { initialPhase, reachCheckpoint, tickPhase } from "./flow";
 import { createHazard, type Hazard } from "./hazards";
 import { buildLevel } from "./level";
-import { applyInputs, createRaft, type Raft } from "./raft";
-import type { LevelData, Phase, Pose, SeatInput, SimEvent, Snapshot } from "./types";
+import { applyInputs, applyWaterDrag, createRaft, riderPose, type Raft } from "./raft";
+import type { LevelData, Phase, Pose, SeatInput, SimEvent, Snapshot, Vec2 } from "./types";
 
 export type Sim = {
   world: RAPIER.World;
   eventQueue: RAPIER.EventQueue;
   raft: Raft;
+  /** Centerline samples of the course's channel, for the current. Null on still-water courses. */
+  stream: Sample[] | null;
   hazards: Hazard[];
   checkpointByHandle: Map<number, number>;
   checkpointCount: number;
@@ -20,14 +23,15 @@ export type Sim = {
 /** Rapier ships as WASM. Call once before createSim, in the browser and in Node. */
 export const initPhysics = (): Promise<void> => RAPIER.init();
 
-/** `seats` is the crew layout from `crewSeats(n)`, one seat per rider (human or bot). */
-export function createSim(level: LevelData, seats: readonly Seat[] = SEATS): Sim {
+/** `zones` is the crew layout from `crewZones(n)`, one zone per rider (human or bot). */
+export function createSim(level: LevelData, zones: readonly Zone[] = crewZones(MAX_CREW)): Sim {
   const world = new RAPIER.World({ x: 0, y: 0 }); // top-down: no gravity, water drag comes from damping
   world.timestep = STEP;
   return {
     world,
     eventQueue: new RAPIER.EventQueue(true),
-    raft: createRaft(world, level.spawn, seats),
+    raft: createRaft(world, level.spawn, zones),
+    stream: level.channel ? sampleChannel(level.channel) : null,
     hazards: level.hazards.map((def) => createHazard(world, def)),
     checkpointByHandle: buildLevel(world, level),
     checkpointCount: level.checkpoints.length,
@@ -40,7 +44,9 @@ export function createSim(level: LevelData, seats: readonly Seat[] = SEATS): Sim
 export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   const events: SimEvent[] = [];
   sim.phase = tickPhase(sim.phase, sim.tick, events);
-  if (sim.phase.kind === "racing") applyInputs(sim.raft, inputs, events);
+  const racing = sim.phase.kind === "racing";
+  applyInputs(sim.raft, inputs, racing, events);
+  applyWaterDrag(sim.raft, racing ? flowAt(sim, sim.raft.body.translation()) : STILL);
   for (const hazard of sim.hazards) hazard.update(STEP);
 
   sim.world.step(sim.eventQueue);
@@ -63,6 +69,15 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   return events;
 }
 
+const STILL = { x: 0, y: 0 };
+
+/** The current: downstream along the channel's centerline tangent. It starts with the race. */
+function flowAt(sim: Sim, p: Vec2): Vec2 {
+  if (!sim.stream) return STILL;
+  const at = pointAt(sim.stream, nearestS(sim.stream, p));
+  return { x: at.tx * CURRENT_SPEED, y: at.ty * CURRENT_SPEED };
+}
+
 function pose(body: RAPIER.RigidBody): Pose {
   const t = body.translation();
   return { x: t.x, y: t.y, rot: body.rotation() };
@@ -73,6 +88,7 @@ export function snapshot(sim: Sim): Snapshot {
   return {
     tick: sim.tick,
     raft: pose(sim.raft.body),
+    riders: sim.raft.at.map(riderPose),
     gas: [...sim.raft.gas],
     hazards: sim.hazards.map((h) => ({ id: h.id, ...pose(h.body) })),
     phase: sim.phase,

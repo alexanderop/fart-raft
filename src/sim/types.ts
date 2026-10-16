@@ -3,12 +3,16 @@
 
 /** Command pattern: one seat's intent for one tick. Keyboard, bot and network all produce this. */
 export type SeatInput = {
-  thrust: boolean;
-  /** Push direction in the raft's frame, radians. 0 = raft forward. */
-  aim: number;
+  /**
+   * Stick in world space (sim frame), length 0–1. The rider slides around the ring by the
+   * part of it that runs along the ring.
+   */
+  move: Vec2;
+  /** Start a fart burst when ready. Held, it puffs again after each cooldown. */
+  fart: boolean;
 };
 
-export const IDLE_INPUT: SeatInput = { thrust: false, aim: 0 };
+export const IDLE_INPUT: SeatInput = { move: { x: 0, y: 0 }, fart: false };
 
 /** Event Queue: what happened during one tick. The client turns these into sound, particles and UI. */
 export type SimEvent =
@@ -25,9 +29,13 @@ export type Phase =
 
 export type Pose = { x: number; y: number; rot: number };
 
+/** A rider on the deck, in the raft's frame. `face` is where it looks; it farts the other way. */
+export type RiderPose = { x: number; y: number; face: number };
+
 export type Snapshot = {
   tick: number;
   raft: Pose;
+  riders: RiderPose[];
   gas: number[];
   hazards: (Pose & { id: string })[];
   phase: Phase;

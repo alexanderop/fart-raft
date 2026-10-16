@@ -41,7 +41,7 @@ Toolchain is **Vite+** (`vite-plus`, `vp`): lint/fmt/test config all live in `vi
 
 ### The three rules
 
-1. **Inputs are data.** The sim only sees `SeatInput { thrust, aim }` per seat per tick. It never reads the keyboard.
+1. **Inputs are data.** The sim only sees `SeatInput { move, fart }` per seat per tick (`move` is a world-space stick vector). It never reads the keyboard or the camera.
 2. **Fixed timestep.** The sim steps at 60 Hz (`STEP`), rendering interpolates with `alpha`. Never pass a variable `dt` into the sim.
 3. **`src/sim/` is headless.** It must run unchanged in Node (tests prove it today, the server later).
 
@@ -84,12 +84,12 @@ public/models/  kit.glb: every visual asset, one top-level node per asset (see "
 ## Conventions
 
 - **Coordinates:** sim is 2D, `+x` = raft forward, `+y` = left. Three is Y-up: sim `(x, y)` → three `(x, 0, -y)`, sim `rot` → `rotation.y`. All conversion goes through `client/render/coords.ts`.
-- **Seats:** the crew layout is data: `createSim(level, crewSeats(n))` for 1–4 riders. Every layout is balanced (1 = rear center, 2 = rear pair, 3 = rear pair + front center, 4 = `SEATS`: `0` rear-left, `1` rear-right, `2` front-left, `3` front-right). A lone rider gets `SOLO_BOOST`.
-- **Players:** the start menu (`client/ui/menu.ts`) picks humans (0–4) and whether bots fill empty seats; `?players=N&bots=0|1` skips it. Humans take the first seats (P1 WASD, P2 Arrows, P3 IJL, P4 Numpad 8/4/6; a single human gets WASD or Arrows), bots the rest.
-- **Bots** (`input/bot.ts`) are plain `InputSource`s that read the latest `Snapshot`, nothing else, so the server can run them unchanged. `bot.test.ts` races every crew size headless and must finish.
-- **Feel knobs** live in `sim/constants.ts` (`FART_FORCE`, damping, gas drain/regen). Tune on an empty pond before building courses.
+- **Zones:** the raft is round (`RAFT_RADIUS`). Riders wade in the water around it (`RIDER_RING`), hands on the ring, always facing its center: butt out. A crew of n splits the ring into n equal arcs: `createSim(level, crewZones(n))` (1 = whole ring, 2 = left/right halves, 3 = thirds, 4 = quarters: `0` rear-left, `1` rear-right, `2` front-left, `3` front-right). The stick slides a rider along its arc (`clampToZone`); a fart is a short burst (`FART_TICKS`, `FART_COOLDOWN`, `FART_COST`) that pushes the raft from the rider toward the center, so position is the only steering and the raft never spins from farts. The collider (`RAFT_HULL`) includes the riders. Rider poses are in `Snapshot.riders`. The client tints each arc in its seat color (`client/render/zones.ts`). A lone rider gets `SOLO_BOOST`.
+- **Players:** the start menu (`client/ui/menu.ts`) picks humans (0–4) and whether bots fill empty seats; `?players=N&bots=0|1` skips it. Humans take the first seats (P1 WASD + Space, P2 Arrows + Enter/Right Shift, P3 IJKL + U/O, P4 Numpad 8456 + Numpad 0; a single human gets either cluster), bots the rest. Keys walk relative to the camera.
+- **Bots** (`input/bot.ts`) are plain `InputSource`s that read the latest `Snapshot`, nothing else, so the server can run them unchanged. Each slides to the spot in its arc opposite the push the crew needs and farts when its push lines up. `bot.test.ts` races every crew size headless and must finish.
+- **Feel knobs** live in `sim/constants.ts` (`FART_FORCE`, burst length/cooldown/cost, `WALK_SPEED`, damping, `CURRENT_SPEED`, gas regen). Tune on an empty pond before building courses.
 - **Course JSON** is always loaded through `parseLevel()`, never cast. New hazard kinds go in `HazardDef["kind"]`, `KINDS`, and the validator's `HAZARD_KINDS`.
-- **Channel courses:** a course is mostly one `channel` (centerline control points + `halfWidth` + spiked `spikes` spans by arc length). `sim/channel.ts` smooths it (Chaikin) and derives the bank colliders; terrain, bots, camera and the HUD progress bar all read the same samples. Edit `scripts/canyon.ts`, then `pnpm course`; gates and hazards are placed by arc length. Hazards: `spinner` (bar spinning about its center) and `sweeper` (bar hinged on a bank, swings `SWEEP_AMPLITUDE`).
+- **Channel courses:** a course is mostly one `channel` (centerline control points + `halfWidth` + spiked `spikes` spans by arc length). `sim/channel.ts` smooths it (Chaikin) and derives the bank colliders; terrain, bots, camera and the HUD progress bar all read the same samples. Edit `scripts/canyon.ts`, then `pnpm course`; gates and hazards are placed by arc length. The water flows downstream along the centerline at `CURRENT_SPEED` once the race starts (drag is relative to the water, `applyWaterDrag`), so an idle raft drifts; the water shader draws matching streaks from the ribbon's `aFlow` attribute. Hazards: `spinner` (bar spinning about its center) and `sweeper` (bar hinged on a bank, swings `SWEEP_AMPLITUDE`).
 - Tests: BDD nesting (`describe('given …')` → `describe('when …')` → `it('should …')`), and run the real `step()` rather than mocking Rapier.
 
 ## Asset kit
@@ -98,7 +98,7 @@ Look target: Fart Together gameplay (high camera over narrow blue channels on pe
 
 `kit.glb` node contract (meters, origin at base center on the water plane, forward +x) used by `client/render/kit.ts` / `terrain.ts`:
 
-- `raft` (≈3.0 × 2.4) with children `rider_0..3` (capybara, blue hippo, purple hippo, croc, in seat order)
+- `raft` (round, radius 2.1 = sim `RAFT_RADIUS`, deck top ≈ 0.39) with children `rider_0..3` (capybara, blue hippo, purple hippo, croc, in seat order), feet in the water; the client moves them around the ring
 - `spinner` 2 m bar, scaled `(hx, hy, hy)` · `sweeper` 2 m arm with its pivot at the origin, scaled `(hx, 1, 1)` · `spike_strip` 2 m along x, spikes toward sim +y, tiled along spiked spans
 - `gate_post` (8.5 m), `gate_bar` (2 m, scaled to the gate), `start_sign`, `gate_sign`, `finish_sign` · decor: `tree_round`, `bush`, `fern`, `grass`
 
@@ -129,14 +129,14 @@ The server never parses `.glb`; it only needs the JSON.
 
 Done:
 
-- Vite+ project. Sim, fixed loop, 2-seat keyboard (WASD + Arrows: up = fart, left/right = aim nozzle ±60°), R to restart
-- Pond test course (tests) and the canyon course (433 m winding channel, 2 sweepers, 2 spinners, spiked outer bends, 3 checkpoints)
+- Vite+ project. Sim, fixed loop, keyboard for up to 4 (slide around your arc of the ring, tap to fart a short burst), R to restart
+- Pond test course (tests) and the canyon course (433 m winding channel, half-width 7, 2 sweepers, 2 spinners, spiked outer bends, 3 checkpoints)
 - Fart Together look, matched against gameplay frames: high chase camera that follows the stream, floating plateaus with cliffs and mesas, lime rails, spike strips, golden bamboo START/CHECKPOINT/FINISH gates, green ring raft
 - HUD: top progress bar (arc length), `mm:ss.cc` timer pill, fart puff counter, floating name tags with gas bars
-- Animation: riders turn their butts toward the exhaust, idle/cheer/bump reactions, raft bob/bank, wind sway, wake/ripples, gate glow + confetti
+- Animation: riders wade around the ring facing in, reach onto it, waddle when moving, idle/cheer/bump reactions, raft bob/bank, wind sway, wake/ripples, gate glow + confetti
 - Start menu: 0–4 players, optional bots in empty seats, Esc back to menu
 - Bot `InputSource` (snapshot-driven, headless, stuck recovery, follows the channel centerline); bots finish both courses with every crew size
-- 18 tests: sim (countdown, thrust, turning, solo crew, determinism, headless, level and channel validation, canyon banks hold the raft) + bot races for crews 1–4 on pond and canyon
+- 21 tests: sim (countdown, burst thrust, one tap = one burst, push away from the rider without spin, riders stay on their arc facing the center, solo crew, determinism, headless, level and channel validation, canyon banks hold the raft) + bot races for crews 1–4 on pond and canyon
 - GitHub Pages deploy on push to `main`: https://alexanderop.github.io/fart-raft/
 
 Next, in order:

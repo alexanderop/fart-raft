@@ -1,4 +1,5 @@
 import "./style.css";
+import { Vector3 } from "three";
 import canyon from "../courses/canyon.json";
 import { startLoop } from "./client/loop";
 import { createCameraShake } from "./client/fx/cameraShake";
@@ -20,7 +21,7 @@ import {
 import { botSource } from "./input/bot";
 import { keyboardSource, listenKeyboard, PLAYER_KEYS, WASD_OR_ARROWS } from "./input/keyboard";
 import { createSeats, readSeats, type InputSource } from "./input/sources";
-import { crewSeats, STEP, type Seat } from "./sim/constants";
+import { crewZones, STEP, type Zone } from "./sim/constants";
 import { createSim, initPhysics, snapshot, step } from "./sim/sim";
 import type { LevelData, SimEvent, Snapshot } from "./sim/types";
 import { parseLevel } from "./sim/level";
@@ -34,7 +35,10 @@ const [, config] = await Promise.all([
 ]);
 history.replaceState(null, "", configToSearch(config));
 
-const crew = crewSeats(crewSize(config));
+const crew = crewZones(crewSize(config));
+
+/** The camera's forward direction on the water (sim radians): keys walk riders relative to it. */
+let cameraHeading = level.spawn.rot;
 
 /**
  * Fill seats from the menu choice. Humans take the first seats, bots the rest. Each one is
@@ -42,7 +46,7 @@ const crew = crewSeats(crewSize(config));
  */
 function fillSeats(
   cfg: GameConfig,
-  seats: readonly Seat[],
+  seats: readonly Zone[],
   observe: () => Snapshot,
   lvl: LevelData,
 ): InputSource[] {
@@ -51,7 +55,7 @@ function fillSeats(
     sources[i] =
       i >= cfg.humans
         ? botSource(i, seats, lvl, observe)
-        : keyboardSource(cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[i]!, STEP);
+        : keyboardSource(cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[i]!, () => cameraHeading);
   }
   return sources;
 }
@@ -87,12 +91,12 @@ const confetti = createConfetti(view.scene);
 const shake = createCameraShake();
 const hud = createHud(app, {
   seatLabels,
-  seats: crew,
   camera: view.camera,
   progress: progressTrack(level),
 });
 
 let lastFrame = performance.now();
+const lookDir = new Vector3();
 
 /** Confetti shoots from the sign of the gate that was just passed. */
 function celebrate(index: number) {
@@ -127,6 +131,8 @@ startLoop(
     wake.update(dt, lerpPose(prev.raft, curr.raft, alpha));
     confetti.update(dt);
     view.draw(prev, curr, alpha, shake.update(dt));
+    view.camera.getWorldDirection(lookDir);
+    cameraHeading = Math.atan2(-lookDir.z, lookDir.x);
     hud.draw(curr, lerpPose(prev.raft, curr.raft, alpha));
   },
 );

@@ -129,6 +129,14 @@ function buildChannel(ch: Channel, kit: Kit, water: THREE.Material, rand: () => 
     ),
     water,
   );
+  // Flow coordinates for the water shader's streaks: (arc length, offset across, on).
+  stream.geometry.setAttribute(
+    "aFlow",
+    new THREE.Float32BufferAttribute(
+      across.flatMap((u) => samples.flatMap((p) => [p.s, u * (hw + WATER_MARGIN), 1])),
+      3,
+    ),
+  );
   stream.receiveShadow = true;
   group.add(stream);
 

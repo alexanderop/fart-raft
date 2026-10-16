@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { TICK_RATE, type Seat } from "../../sim/constants";
+import { TICK_RATE } from "../../sim/constants";
 import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types";
 import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring";
 
@@ -9,12 +9,15 @@ import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./sprin
  */
 export type RiderAnimator = {
   onEvent(e: SimEvent, now: number): void;
-  update(dt: number, now: number, prev: Snapshot, curr: Snapshot, pose: Pose): void;
+  update(dt: number, now: number, prev: Snapshot, curr: Snapshot, alpha: number, pose: Pose): void;
   reset(): void;
 };
 
 const FART_WINDOW = 0.1; // a seat counts as farting this long after its last fart event
-const YAW_LIMIT = 1.2;
+/** Riders wade outside the ring: lean in over it and reach forward onto it. */
+const LEAN_IN = 0.18;
+const REACH = 1.25;
+const WADDLE_RATE = 13; // steps per second-ish while walking
 
 type Rest = { pos: THREE.Vector3; rotY: number };
 
@@ -28,6 +31,10 @@ type Rider = {
   lastFart: number;
   /** Exhaust direction in the raft's local sim frame. */
   exhaust: number;
+  /** 0..1, smoothed: how much the rider is walking right now. */
+  walk: number;
+  lastX: number;
+  lastY: number;
   wasFarting: boolean;
   yaw: Spring;
   hop: Spring;
@@ -48,26 +55,22 @@ type Rider = {
   nextBlink: number;
 };
 
-const RIDER_INSET = 0.75; // matches build_kit.py: riders sit on the ring, inside the sim seat
-
-/** The kit ships four riders at the co-op seats. Seat one per crew seat and hide the rest. */
-function seatRiders(raft: THREE.Object3D, seats: readonly Seat[]): void {
+/** The kit ships four riders. Show one per crew seat and hide the rest. */
+function showRiders(raft: THREE.Object3D, crew: number): void {
   for (let i = 0; ; i++) {
     const body = raft.getObjectByName(`rider_${i}`);
     if (!body) return;
-    const seat = seats[i];
-    body.visible = seat !== undefined;
-    if (seat) body.position.set(seat.x * RIDER_INSET, body.position.y, -seat.y * RIDER_INSET);
+    body.visible = i < crew;
   }
 }
 
 export function createRiderAnimator(
   raft: THREE.Object3D,
   level: LevelData,
-  seats: readonly Seat[],
+  crew: number,
 ): RiderAnimator {
-  seatRiders(raft, seats);
-  const riders: Rider[] = Array.from({ length: seats.length }, (_, i) => {
+  showRiders(raft, crew);
+  const riders: Rider[] = Array.from({ length: crew }, (_, i) => {
     const body = raft.getObjectByName(`rider_${i}`);
     return {
       body,
@@ -78,6 +81,9 @@ export function createRiderAnimator(
       phase: i * 1.7 + 0.4,
       lastFart: -10,
       exhaust: Math.PI,
+      walk: 0,
+      lastX: 0,
+      lastY: 0,
       wasFarting: false,
       yaw: spring(),
       hop: spring(),
@@ -107,9 +113,7 @@ export function createRiderAnimator(
     switch (e.type) {
       case "fart": {
         const r = riders[e.seat];
-        if (!r || !lastPose) return;
-        // Exhaust world dir → raft-local angle (sim frame).
-        r.exhaust = Math.atan2(e.dirY, e.dirX) - lastPose.rot;
+        if (!r) return;
         if (now - r.lastFart > FART_WINDOW) r.squash.v += 9; // pulse on the first fart of a burst
         r.lastFart = now;
         break;
@@ -157,7 +161,14 @@ export function createRiderAnimator(
     }
   }
 
-  function update(dt: number, now: number, _prev: Snapshot, curr: Snapshot, pose: Pose): void {
+  function update(
+    dt: number,
+    now: number,
+    prev: Snapshot,
+    curr: Snapshot,
+    alpha: number,
+    pose: Pose,
+  ): void {
     if (curr.tick < lastTick) reset();
     lastTick = curr.tick;
     lastPose = pose;
@@ -185,6 +196,16 @@ export function createRiderAnimator(
       const { body } = r;
       if (!body) return;
       const t = now + r.phase;
+      const to = curr.riders[i];
+      if (!to) return;
+      const from = prev.riders[i] ?? to;
+      const x = from.x + (to.x - from.x) * alpha;
+      const y = from.y + (to.y - from.y) * alpha;
+      const step = Math.hypot(x - r.lastX, y - r.lastY);
+      r.lastX = x;
+      r.lastY = y;
+      r.walk += ((dt > 0 && step / dt > 0.3 ? 1 : 0) - r.walk) * damp(10, dt);
+      const waddle = Math.sin(now * WADDLE_RATE + r.phase) * r.walk;
       const farting = now - r.lastFart < FART_WINDOW;
       const gas = curr.gas[i] ?? 100;
       const slumpTarget = gas < 12 ? 1 : 0;
@@ -196,9 +217,9 @@ export function createRiderAnimator(
       r.puff += ((farting ? 1 : 0) - r.puff) * damp(farting ? 25 : 8, dt);
       r.lean += ((farting ? 1 : 0) - r.lean) * damp(12, dt);
 
-      // Turn the seat so the butt points along the exhaust. Face = exhaust + 180°.
-      const faceTarget = farting ? clamp(wrapAngle(r.exhaust + Math.PI), -YAW_LIMIT, YAW_LIMIT) : 0;
-      stepSpring(r.yaw, faceTarget, 160, 16, dt);
+      // Face where the sim says; the butt (and the exhaust) points the other way.
+      r.exhaust = to.face + Math.PI;
+      stepSpring(r.yaw, r.yaw.x + wrapAngle(to.face - r.yaw.x), 160, 16, dt);
 
       // Cheer envelope: both arms up, jumping, then settle (loops softly after the finish).
       const cheerT = now - r.cheerAt;
@@ -222,7 +243,7 @@ export function createRiderAnimator(
       stepSpring(r.wobble, 0, 140, 6, dt);
 
       // Hop only goes up off the seat.
-      const lift = Math.max(0, r.hop.x) * 0.5 + cheerHop;
+      const lift = Math.max(0, r.hop.x) * 0.5 + cheerHop + Math.abs(waddle) * 0.12;
       const breathRate = 2.2 + r.slump * 3.5;
       const breath = Math.sin(t * breathRate) * (0.022 + r.slump * 0.02);
       const jitter = r.puff * Math.sin(now * 85 + r.phase * 9);
@@ -231,14 +252,14 @@ export function createRiderAnimator(
       // Shuffle toward the push side while farting (push = −exhaust).
       const shuffle = r.puff * 0.07;
       body.position.set(
-        r.rest.pos.x - Math.cos(r.exhaust) * shuffle + r.bumpX.x * 0.015,
+        x - Math.cos(r.exhaust) * shuffle + r.bumpX.x * 0.015,
         r.rest.pos.y + lift - r.slump * 0.05,
-        r.rest.pos.z + Math.sin(r.exhaust) * shuffle + r.bumpZ.x * 0.015 + jitter * 0.015,
+        -y + Math.sin(r.exhaust) * shuffle + r.bumpZ.x * 0.015 + jitter * 0.015,
       );
       body.rotation.set(
-        Math.sin(t * 0.9) * 0.045 + r.wobble.x * 0.012 + jitter * 0.05,
+        Math.sin(t * 0.9) * 0.045 + r.wobble.x * 0.012 + jitter * 0.05 + waddle * 0.14,
         r.rest.rotY + r.yaw.x,
-        -r.lean * 0.16 - r.slump * 0.22 + Math.sin(t * 0.7 + 1) * 0.025 + r.hop.x * 0.02,
+        -LEAN_IN - r.lean * 0.16 - r.slump * 0.22 + Math.sin(t * 0.7 + 1) * 0.025 + r.hop.x * 0.02,
         "YXZ",
       );
       const stretch = Math.max(0, r.hop.x) * 0.06;
@@ -295,8 +316,10 @@ export function createRiderAnimator(
       const angL = Math.max(0, up + flail + wave + r.wobble.x * 0.01) - r.slump * 0.05;
       const angR = Math.max(0, up + flail * 0.9 - wave + r.wobble.x * 0.01) - r.slump * 0.05;
       // Left is mirrored from right: left arm raises with +x rotation, right with −x.
-      if (r.armL) r.armL.rotation.set(angL, 0, cheer * 0.2, "XYZ");
-      if (r.armR) r.armR.rotation.set(-angR, 0, cheer * 0.2, "XYZ");
+      // Hands rest on the ring in front, except while cheering.
+      const reach = REACH * (1 - cheer);
+      if (r.armL) r.armL.rotation.set(angL * 0.4, 0, reach + cheer * 0.2, "XYZ");
+      if (r.armR) r.armR.rotation.set(-angR * 0.4, 0, reach + cheer * 0.2, "XYZ");
     });
   }
 

@@ -1,4 +1,5 @@
-import { AIM_LIMIT, AIM_SPEED, GAS_MAX, STEP, type Seat } from "../sim/constants";
+import { STEP, type Zone } from "../sim/constants";
+import { clampToZone } from "../sim/raft";
 import { levelWalls, nearestS, pointAt, sampleChannel } from "../sim/channel";
 import {
   IDLE_INPUT,
@@ -17,8 +18,6 @@ export type BotTuning = {
   cruise: number; // target speed, m/s
   avoidRange: number; // start steering away from walls this close (m)
   avoidLookahead: number; // also probe where we'll be in this many seconds
-  headingGain: number; // how hard to turn the nose toward the travel direction
-  spinDamping: number; // fight existing spin so the raft doesn't overshoot
 };
 
 /** Picked by sweeping crews of 1–4 on the pond: every crew finishes, the slowest in ≈ 45 s. */
@@ -26,18 +25,11 @@ export const DEFAULT_TUNING: BotTuning = {
   cruise: 7,
   avoidRange: 3,
   avoidLookahead: 0.7,
-  headingGain: 1.5,
-  spinDamping: 0.6,
 };
-const AIM_SAMPLES = 9;
-const GAS_RESERVE = 0.12; // stop farting below this fraction…
-const GAS_RESUME = 0.5; // …until the tank is back to this
-// Fart whenever the best nozzle angle helps at all. A higher bar deadlocks a solo rider, which
-// often can't push forward and turn the right way at once.
-const MIN_SCORE = 0.02;
-// Facing far off course, turning is worth a little backward push: otherwise a solo rider
-// pinned on a bend sits forever because every nozzle angle scores below zero.
-const MUST_TURN = 0.9;
+/** Fart when the push points within ~45° of where the crew wants to go. */
+const MIN_ALIGN = 0.7;
+/** Closer than this (radians) to the chosen spot counts as there. */
+const ARRIVED = 0.05;
 
 type Vec = Vec2;
 
@@ -147,23 +139,22 @@ function escapeForce(walls: readonly Box[], snap: Snapshot, target: Vec, t: BotT
 }
 
 /**
- * Bot for one seat. Each tick it picks the nozzle angle whose push best serves the crew's
- * shared goal (move toward the gate, keep the nose pointed there) given where its seat sits.
- * Bots don't talk to each other: they converge because they all read the same snapshot.
+ * Bot for one seat. Each tick it works out the push the crew needs (toward the next gate, away
+ * from walls, minus drift), slides around the ring to the spot in its arc opposite that push,
+ * and farts when the push it would give lines up. Bots don't talk to each other: they converge
+ * because they all read the same snapshot.
  */
 export function botSource(
   seatIndex: number,
-  seats: readonly Seat[],
+  zones: readonly Zone[],
   level: LevelData,
   observe: () => Snapshot,
   tuning: BotTuning = DEFAULT_TUNING,
 ): InputSource {
-  const seat = seats[seatIndex]!;
+  const zone = zones[seatIndex]!;
   const walls = levelWalls(level);
   const route = level.channel ? sampleChannel(level.channel) : null;
   let last: Snapshot | undefined;
-  let aim = 0;
-  let resting = false;
   let slowFor = 0;
   let escapeLeft = 0;
 
@@ -174,14 +165,14 @@ export function botSource(
       last = snap;
       if (snap.phase.kind !== "racing") return IDLE_INPUT;
       const gate = level.checkpoints[snap.phase.nextCheckpoint];
-      if (!gate) return IDLE_INPUT;
+      const rider = snap.riders[seatIndex];
+      if (!gate || !rider) return IDLE_INPUT;
 
       const { raft } = snap;
       const target = route ? pointAt(route, nearestS(route, raft) + ROUTE_LOOKAHEAD) : gate;
       const vel = prev
         ? { x: (raft.x - prev.raft.x) / STEP, y: (raft.y - prev.raft.y) / STEP }
         : { x: 0, y: 0 };
-      const spin = prev ? wrap(raft.rot - prev.raft.rot) / STEP : 0;
 
       // Stuck against a rock or bank: steering toward the gate keeps pinning us there.
       if (escapeLeft > 0) escapeLeft -= STEP;
@@ -193,47 +184,24 @@ export function botSource(
         }
       } else slowFor = 0;
 
-      const escaping = escapeLeft > 0;
-      const force = escaping
-        ? escapeForce(walls, snap, target, tuning)
-        : desiredForce(walls, snap, vel, target, tuning);
-      const fLen = Math.hypot(force.x, force.y);
-      const headingErr = wrap(Math.atan2(force.y, force.x) - raft.rot);
-      // While escaping, just translate: turning against a bank only pins the raft harder,
-      // since one side of it can't move.
-      const torqueWant = escaping ? 0 : headingErr * tuning.headingGain - spin * tuning.spinDamping;
+      const force =
+        escapeLeft > 0
+          ? escapeForce(walls, snap, target, tuning)
+          : desiredForce(walls, snap, vel, target, tuning);
 
-      // Seat offset in world space: pushes there also turn the raft (torque = r × F).
-      const c = Math.cos(raft.rot);
-      const s = Math.sin(raft.rot);
-      const rx = seat.x * c - seat.y * s;
-      const ry = seat.x * s + seat.y * c;
+      // A rider at ring angle `at` pushes toward the center, so the best spot is opposite the
+      // wanted force. Slide there along the ring, the short way round.
+      const at = Math.atan2(rider.y, rider.x);
+      const spot = clampToZone(zone, Math.atan2(-force.y, -force.x) - raft.rot);
+      const gap = wrap(spot - at);
+      const tangent = raft.rot + at + Math.PI / 2;
+      const dir = Math.abs(gap) > ARRIVED ? Math.sign(gap) : 0;
+      const move = { x: Math.cos(tangent) * dir, y: Math.sin(tangent) * dir };
 
-      let bestAim = 0;
-      let bestScore = -Infinity;
-      for (let k = 0; k < AIM_SAMPLES; k++) {
-        const a = -AIM_LIMIT + (2 * AIM_LIMIT * k) / (AIM_SAMPLES - 1);
-        const fx = Math.cos(raft.rot + a);
-        const fy = Math.sin(raft.rot + a);
-        const along = fLen > 0 ? (fx * force.x + fy * force.y) / fLen : 0;
-        const torque = rx * fy - ry * fx;
-        const score = along + torque * clamp(torqueWant, -1, 1);
-        if (score > bestScore) {
-          bestScore = score;
-          bestAim = a;
-        }
-      }
-
-      // Swing the nozzle at the same speed a human can.
-      const maxSwing = AIM_SPEED * STEP;
-      aim += clamp(bestAim - aim, -maxSwing, maxSwing);
-
-      const gas = (snap.gas[seatIndex] ?? 0) / GAS_MAX;
-      if (gas < GAS_RESERVE) resting = true;
-      else if (gas > GAS_RESUME) resting = false;
-
-      const helps = bestScore > MIN_SCORE || Math.abs(torqueWant) > MUST_TURN;
-      return { thrust: !resting && helps, aim };
+      const fLen = Math.hypot(force.x, force.y) || 1;
+      const push = raft.rot + at + Math.PI;
+      const align = (Math.cos(push) * force.x + Math.sin(push) * force.y) / fLen;
+      return { move, fart: align > MIN_ALIGN };
     },
   };
 }

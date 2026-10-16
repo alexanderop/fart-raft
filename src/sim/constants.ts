@@ -1,48 +1,76 @@
 export const TICK_RATE = 60;
 export const STEP = 1 / TICK_RATE;
 
-export type Seat = { readonly x: number; readonly y: number };
+/**
+ * A rider's stretch of the ring, in the raft's frame (+x = forward, +y = left): the arc
+ * `center ± half` radians. A crew of n splits the ring into n equal arcs; a solo rider gets
+ * the whole ring (half = π).
+ */
+export type Zone = { readonly center: number; readonly half: number };
 
-/** Full crew: seat positions in the raft's frame (+x = forward, +y = left). Off-center pushes turn the raft. */
-export const SEATS: readonly Seat[] = [
-  { x: -1, y: 0.8 }, // rear left
-  { x: -1, y: -0.8 }, // rear right
-  { x: 1, y: 0.8 }, // front left
-  { x: 1, y: -0.8 }, // front right
-];
-
-export const MAX_CREW = SEATS.length;
+const Q = Math.PI / 4;
 
 /**
- * Seat layout for a crew of 1–4 riders (humans + bots). Every layout is balanced, so all
- * riders pushing straight back drives the raft straight; steering comes from aiming.
+ * Zones for a crew of 1–4 riders (humans + bots), in seat order. Every layout is balanced, so
+ * riders spread evenly around the ring.
+ * 4 = rear-left, rear-right, front-left, front-right.
  */
-const CREW_LAYOUTS: Record<number, readonly Seat[]> = {
-  1: [{ x: -1, y: 0 }],
-  2: [SEATS[0]!, SEATS[1]!],
-  3: [SEATS[0]!, SEATS[1]!, { x: 1, y: 0 }],
-  4: SEATS,
+const CREW_ZONES: Record<number, readonly Zone[]> = {
+  1: [{ center: Math.PI, half: Math.PI }],
+  2: [
+    { center: Math.PI / 2, half: Math.PI / 2 },
+    { center: -Math.PI / 2, half: Math.PI / 2 },
+  ],
+  3: [
+    { center: (2 * Math.PI) / 3, half: Math.PI / 3 },
+    { center: (-2 * Math.PI) / 3, half: Math.PI / 3 },
+    { center: 0, half: Math.PI / 3 },
+  ],
+  4: [
+    { center: 3 * Q, half: Q },
+    { center: -3 * Q, half: Q },
+    { center: Q, half: Q },
+    { center: -Q, half: Q },
+  ],
 };
 
-export function crewSeats(size: number): readonly Seat[] {
-  const layout = CREW_LAYOUTS[size];
-  if (!layout) throw new Error(`crew size must be 1–${MAX_CREW}, got ${size}`);
-  return layout;
+export const MAX_CREW = 4;
+
+export function crewZones(size: number): readonly Zone[] {
+  const zones = CREW_ZONES[size];
+  if (!zones) throw new Error(`crew size must be 1–${MAX_CREW}, got ${size}`);
+  return zones;
 }
 
-export const RAFT_HALF = { x: 1.5, y: 1.2 };
+/** Round raft. Mass is kept at RAFT_MASS whatever the radius, so the feel knobs below hold. */
+export const RAFT_RADIUS = 2.1;
+export const RAFT_MASS = 7.2;
 
-/** Nozzle range and swing speed. Every input source (keyboard, bot, network) plays by these. */
-export const AIM_LIMIT = Math.PI / 3; // ±60° from straight back
-export const AIM_SPEED = 3; // radians per second
+/**
+ * Riders wade in the water around the raft, hands on the ring, always facing its center: their
+ * butts point out, so every fart pushes the raft toward its center. RIDER_RING is the circle
+ * their bodies sit on; the collider (RAFT_HULL) covers them too.
+ */
+export const RIDER_RING = RAFT_RADIUS + 0.45;
+export const RAFT_HULL = RIDER_RING + 0.35;
+/** Half a body's width along the ring: riders keep this far from their arc's ends. */
+export const RIDER_BODY = 0.55;
+export const WALK_SPEED = 2.6; // m/s along the ring
 
 // Feel knobs. Tune these on an empty pond before building courses.
-export const FART_FORCE = 25;
+/** A fart is a short burst: FART_FORCE for FART_TICKS, pushing the raft from the rider toward its center. */
+export const FART_FORCE = 55;
+export const FART_TICKS = 15;
+/** Ticks from one burst's start to the next, so holding the key puffs in a rhythm. */
+export const FART_COOLDOWN = 24;
+export const FART_COST = 20; // gas per burst
 export const SOLO_BOOST = 2; // a lone rider pushes like two, so single player isn't a slog
+/** Water drag: pulls the raft's velocity toward the water's (the current) at this rate, 1/s. */
 export const LINEAR_DAMPING = 1.0;
+/** A channel's water flows downstream along its centerline: an idle raft drifts at this speed, m/s. */
+export const CURRENT_SPEED = 2;
 export const ANGULAR_DAMPING = 2.0;
 export const GAS_MAX = 100;
-export const GAS_DRAIN = 50; // per second while farting
 export const GAS_REGEN = 30; // per second while not farting
 
 /** How far a sweeper swings either side of its rest angle, radians. */

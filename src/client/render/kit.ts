@@ -32,7 +32,7 @@ function group(...children: THREE.Object3D[]): THREE.Group {
 
 const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
   raft: () => {
-    const g = group(mesh(new THREE.BoxGeometry(3, 0.5, 2.4), 0xffd23f, 0.25));
+    const g = group(mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.5, 32), 0xffd23f, 0.25));
     const seats = [
       [-1, 0.8],
       [-1, -0.8],

@@ -7,7 +7,7 @@ import { SWEEP_AMPLITUDE } from "../src/sim/constants.ts";
 import type { Box, Channel, HazardDef, LevelData, Span } from "../src/sim/types.ts";
 
 const channel: Channel = {
-  halfWidth: 6,
+  halfWidth: 7,
   points: [
     { x: -6, y: 0 },
     { x: 40, y: 0 },
@@ -52,7 +52,7 @@ function sweeper(id: string, s: number, side: 1 | -1, speed: number): HazardDef 
     x: p.x + p.nx * hw * side,
     y: p.y + p.ny * hw * side,
     rot: Math.atan2(-p.ny * side, -p.nx * side) + side * SWEEP_AMPLITUDE,
-    hx: hw * 0.6,
+    hx: hw * 0.5,
     hy: 0.4,
     speed,
   };
@@ -85,9 +85,9 @@ const level: LevelData = {
   checkpoints: [gate(100), gate(240), gate(length - 6)],
   hazards: [
     sweeper("sweeper-1", 26, 1, 1.3),
-    { ...across(147, 4.2, 0.4), id: "spinner-1", kind: "spinner", speed: 1.1 },
+    { ...across(147, 3.6, 0.4), id: "spinner-1", kind: "spinner", speed: 1.1 },
     sweeper("sweeper-2", 276, -1, 1.6),
-    { ...across(length - 26, 4.2, 0.4), id: "spinner-2", kind: "spinner", speed: -1.4 },
+    { ...across(length - 26, 3.6, 0.4), id: "spinner-2", kind: "spinner", speed: -1.4 },
   ],
 };
 

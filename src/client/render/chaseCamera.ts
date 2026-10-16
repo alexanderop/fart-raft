@@ -21,15 +21,15 @@ export type ChaseCamera = {
 };
 
 const BASE_FOV = 46;
-const BACK = 17;
-const HEIGHT = 25;
+const BACK = 13;
+const HEIGHT = 19;
 /** Stream direction is read this far ahead of the raft, so bends turn the view early. */
 const HEADING_AHEAD = 10;
 /** Screens narrower than this widen the vertical FOV so the channel still fits across. */
 const DESIGN_ASPECT = 16 / 9;
 const MAX_FOV = 90;
 /** The view centers a little ahead of the raft. */
-const LOOK_AHEAD = 6;
+const LOOK_AHEAD = 4;
 
 /** Vertical FOV that shows the same horizontal extent as `fov` does at DESIGN_ASPECT. */
 function fitWidth(fov: number, aspect: number): number {
