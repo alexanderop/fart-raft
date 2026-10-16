@@ -61,6 +61,8 @@ export const ServerMsg = Schema.TaggedUnion({
   },
 });
 export type ServerMsg = typeof ServerMsg.Type;
+export type Welcome = typeof ServerMsg.cases.Welcome.Type;
+export type Frame = typeof ServerMsg.cases.Frame.Type;
 
 export class RoomFull extends Schema.TaggedError<RoomFull>()("RoomFull", {}) {}
 
