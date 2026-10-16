@@ -1,16 +1,33 @@
 import * as THREE from "three";
-import type { Box, LevelData, Pose, SimEvent } from "../../sim/types";
+import { sampleChannel, type Sample } from "../../sim/channel";
+import type { Box, Channel, LevelData, Pose, SimEvent } from "../../sim/types";
 import { applyPose, poseMatrix } from "./coords";
-import { createFoam } from "./foam";
 import { createGates } from "./gates";
 import type { Kit } from "./kit";
 import { createWind, type SwayOptions } from "./wind";
 
-const PLATEAU_DEPTH = 30;
-const PLATEAU_EXTEND = 30;
-const TOP_Y = 2.4;
-const BOTTOM_Y = -8;
-const GRASS = 0xa8d870;
+// Fart Together's look: the channel is cut into peach clay plateaus that float in a pale sky,
+// with coral cliffs dropping into the haze, a lime bumper rail on every bank and magenta spike
+// strips on the dangerous ones. All of it is generated from the channel centerline.
+
+const BANK_TOP = 0.9;
+const CLIFF_BOTTOM = -70;
+const RAIL_RADIUS = 0.34;
+const WATER_MARGIN = 0.6;
+
+const COLORS = {
+  edge: new THREE.Color(0xf29a52),
+  top: new THREE.Color(0xf9c18b),
+  topFar: new THREE.Color(0xfacb98),
+  bankFace: new THREE.Color(0xf0883f),
+  cliffLip: new THREE.Color(0xe8705f),
+  cliff: new THREE.Color(0xf28d78),
+  cliffDeep: new THREE.Color(0xf7c2b4),
+  waterEdge: new THREE.Color(0x2a9fe2),
+  waterMid: new THREE.Color(0x4cc4f6),
+  rail: 0x9ad64b,
+  teal: 0x6fdcc8,
+};
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -29,63 +46,289 @@ function hashString(s: string): number {
   return h >>> 0;
 }
 
-/** Vertical stripes along v: light body, thin dark seams, warm bottom, like layered clay. */
-function clayTexture(body: string, seam: string, bottom: string): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = 4;
-  c.height = 128;
-  const g = c.getContext("2d")!;
-  const bands: [number, number, string][] = [
-    [0, 0.3, body],
-    [0.3, 0.34, seam],
-    [0.34, 0.62, body],
-    [0.62, 0.66, seam],
-    [0.66, 0.84, body],
-    [0.84, 1, bottom],
-  ];
-  for (const [a, b, color] of bands) {
-    g.fillStyle = color;
-    g.fillRect(0, a * 128, 4, (b - a) * 128 + 1);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+/** Sim point → Three vector at height y. */
+const v3 = (x: number, y: number, h: number) => new THREE.Vector3(x, h, -y);
+
+/**
+ * A grid surface through `rows` (each the same length), one color per row, so a strip reads as a
+ * gradient across its width. Double-sided, so winding never decides whether it shows.
+ */
+function strip(rows: THREE.Vector3[][], colors: THREE.Color[]): THREE.BufferGeometry {
+  const n = rows[0]!.length;
+  const pos: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  rows.forEach((row, r) => {
+    for (const p of row) {
+      pos.push(p.x, p.y, p.z);
+      col.push(colors[r]!.r, colors[r]!.g, colors[r]!.b);
+    }
+  });
+  for (let r = 0; r + 1 < rows.length; r++)
+    for (let i = 0; i + 1 < n; i++) {
+      const a = r * n + i;
+      const b = (r + 1) * n + i;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
 }
 
-type Rect = { x: number; y: number; rot: number; hu: number; hv: number };
+/** The point `d` m left of a centerline sample, at height `h`, in Three space. */
+const at = (p: Sample, d: number, h: number) => v3(p.x + p.nx * d, p.y + p.ny * d, h);
 
-type Frame = { ux: number; uy: number; vx: number; vy: number };
-const frameOf = (rot: number): Frame => ({
-  ux: Math.cos(rot),
-  uy: Math.sin(rot),
-  vx: -Math.sin(rot),
-  vy: Math.cos(rot),
-});
+const decorKind = (r: number) =>
+  r < 0.12 ? "tree_round" : r < 0.35 ? "bush" : r < 0.6 ? "fern" : "grass";
 
-/** Distance from point to the raft's intended path (spawn → checkpoints). */
-function distToPath(path: { x: number; y: number }[], x: number, y: number): number {
-  let best = Infinity;
-  for (let i = 0; i + 1 < path.length; i++) {
-    const a = path[i]!;
-    const b = path[i + 1]!;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2));
-    best = Math.min(best, Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t)));
-  }
-  return best;
+const clayMaterial = () =>
+  new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+
+/** Signed curvature per sample (positive = turning left), from the tangent change. */
+function curvature(samples: readonly Sample[]): number[] {
+  return samples.map((_, i) => {
+    const a = samples[Math.max(0, i - 1)]!;
+    const b = samples[Math.min(samples.length - 1, i + 1)]!;
+    return (a.tx * b.ty - a.ty * b.tx) / (b.s - a.s || 1);
+  });
 }
 
-/** Wind per plateau decor kind; the rest (rocks) stays put. */
+/**
+ * How far each bank's plateau reaches, per sample. Wavy so the outer cliffs look carved, and
+ * capped on the inside of bends so the strip never folds over itself.
+ */
+function plateauWidths(samples: readonly Sample[], hw: number, side: 1 | -1, seed: number) {
+  const k = curvature(samples);
+  const raw = samples.map((p, i) => {
+    const wave =
+      11 + 4 * Math.sin(p.s * 0.045 + seed) + 2.5 * Math.sin(p.s * 0.13 + seed * 2.3) - 1;
+    const inner = k[i]! * side;
+    const cap = inner > 1e-4 ? 0.8 / inner - hw : Infinity;
+    return Math.max(1.6, Math.min(wave, cap));
+  });
+  // A window minimum keeps the cap in force a little before and after the tightest point.
+  const W = 10;
+  return raw.map((_, i) => Math.min(...raw.slice(Math.max(0, i - W), i + W + 1)));
+}
+
+function buildChannel(ch: Channel, kit: Kit, water: THREE.Material, rand: () => number) {
+  const group = new THREE.Group();
+  const samples = sampleChannel(ch);
+  const hw = ch.halfWidth;
+  const clay = clayMaterial();
+
+  // Water: a ribbon a little wider than the channel, darker at the banks.
+  const across = [-1, -0.6, 0, 0.6, 1];
+  const stream = new THREE.Mesh(
+    strip(
+      across.map((u) => samples.map((p) => at(p, u * (hw + WATER_MARGIN), 0))),
+      across.map((u) => COLORS.waterEdge.clone().lerp(COLORS.waterMid, 1 - Math.abs(u) ** 2)),
+    ),
+    water,
+  );
+  stream.receiveShadow = true;
+  group.add(stream);
+
+  const outerEdges: { side: 1 | -1; widths: number[] }[] = [];
+  for (const side of [1, -1] as const) {
+    const widths = plateauWidths(samples, hw, side, side === 1 ? 1.3 : 4.1);
+    outerEdges.push({ side, widths });
+    const out = (i: number) => side * (hw + widths[i]!);
+
+    // Bank face (orange band under the rail), plateau top, then the cliff.
+    const bank = new THREE.Mesh(
+      strip(
+        [
+          samples.map((p) => at(p, side * hw, -0.4)),
+          samples.map((p) => at(p, side * hw, BANK_TOP)),
+        ],
+        [COLORS.bankFace, COLORS.bankFace],
+      ),
+      clay,
+    );
+    const top = new THREE.Mesh(
+      strip(
+        [
+          samples.map((p) => at(p, side * hw, BANK_TOP)),
+          samples.map((p) => at(p, side * (hw + 1.4), BANK_TOP)),
+          samples.map((p, i) => at(p, out(i), BANK_TOP)),
+        ],
+        [COLORS.edge, COLORS.top, COLORS.topFar],
+      ),
+      clay,
+    );
+    const cliff = new THREE.Mesh(
+      strip(
+        [
+          samples.map((p, i) => at(p, out(i), BANK_TOP)),
+          samples.map((p, i) => at(p, out(i), BANK_TOP - 1.4)),
+          samples.map((p, i) => at(p, out(i) * 0.98, CLIFF_BOTTOM)),
+        ],
+        [COLORS.cliffLip, COLORS.cliff, COLORS.cliffDeep],
+      ),
+      clay,
+    );
+    top.receiveShadow = true;
+    group.add(bank, top, cliff);
+
+    // Lime bumper rail along the water edge.
+    const rail = new THREE.Mesh(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(samples.map((p) => at(p, side * (hw + 0.05), BANK_TOP + 0.12))),
+        samples.length * 2,
+        RAIL_RADIUS,
+        8,
+      ),
+      new THREE.MeshLambertMaterial({ color: COLORS.rail }),
+    );
+    rail.castShadow = true;
+    group.add(rail);
+
+    // Spike strips along the spiky spans, spikes facing the water.
+    const sideName = side === 1 ? "left" : "right";
+    const spikes: THREE.Matrix4[] = [];
+    for (const span of ch.spikes.filter((sp) => sp.side === sideName)) {
+      for (let s = span.from + 1; s < span.to; s += 2) {
+        const p = samples.find((q) => q.s >= s) ?? samples[samples.length - 1]!;
+        const rot = Math.atan2(p.ty, p.tx) + (side === 1 ? Math.PI : 0);
+        const off = side * (hw - 0.15);
+        spikes.push(poseMatrix({ x: p.x + p.nx * off, y: p.y + p.ny * off, rot }, BANK_TOP - 0.5));
+      }
+    }
+    if (spikes.length) group.add(kit.instance("spike_strip", spikes));
+  }
+
+  // Land caps beyond both channel ends, so the stream starts and stops inside a plateau.
+  for (const [end, dir] of [
+    [samples[0]!, -1],
+    [samples[samples.length - 1]!, 1],
+  ] as const) {
+    const depth = 18;
+    const width = (hw + 12) * 2;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(depth, BANK_TOP - CLIFF_BOTTOM, width), [
+      cliffSide(),
+      cliffSide(),
+      new THREE.MeshLambertMaterial({ color: COLORS.top }),
+      cliffSide(),
+      cliffSide(),
+      cliffSide(),
+    ]);
+    applyPose(
+      mesh,
+      {
+        x: end.x + end.tx * (depth / 2) * dir,
+        y: end.y + end.ty * (depth / 2) * dir,
+        rot: Math.atan2(end.ty, end.tx),
+      },
+      (BANK_TOP + CLIFF_BOTTOM) / 2,
+    );
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  // Plateau-top decor: sparse puffy trees and plants, kept off the rail.
+  const decor: Record<string, THREE.Matrix4[]> = { tree_round: [], bush: [], fern: [], grass: [] };
+  for (const { side, widths } of outerEdges) {
+    for (let i = 0; i < samples.length; i += 2) {
+      const w = widths[i]!;
+      if (w < 4 || rand() < 0.45) continue;
+      const p = samples[i]!;
+      const kind = decorKind(rand());
+      const d = side * (hw + 2.2 + rand() * (w - 3.4));
+      const s = 0.8 + rand() * 0.6;
+      decor[kind]!.push(
+        poseMatrix({ x: p.x + p.nx * d, y: p.y + p.ny * d, rot: rand() * 6.28 }, BANK_TOP, [
+          s,
+          s,
+          s,
+        ]),
+      );
+    }
+  }
+
+  return { group, samples, decor, outerEdges };
+}
+
+function cliffSide() {
+  return new THREE.MeshLambertMaterial({ color: COLORS.cliff });
+}
+
+/** A chunky octagonal clay prism: peach top, coral sides. */
+function mesa(r: number, topY: number, bottomY: number, sides = 8): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.04, topY - bottomY, sides, 1), [
+    new THREE.MeshLambertMaterial({ color: COLORS.cliff, flatShading: true }),
+    new THREE.MeshLambertMaterial({ color: COLORS.top }),
+    new THREE.MeshLambertMaterial({ color: COLORS.cliff }),
+  ]);
+  mesh.position.y = (topY + bottomY) / 2;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/** Background mesas floating around the course, clear of the channel's plateaus. */
+function scatterMesas(samples: readonly Sample[], hw: number, rand: () => number): THREE.Group {
+  const group = new THREE.Group();
+  const xs = samples.map((p) => p.x);
+  const ys = samples.map((p) => p.y);
+  const pad = 70;
+  const [x0, x1] = [Math.min(...xs) - pad, Math.max(...xs) + pad];
+  const [y0, y1] = [Math.min(...ys) - pad, Math.max(...ys) + pad];
+  const placed: { x: number; y: number; r: number }[] = [];
+  for (let tries = 0; tries < 600 && placed.length < 46; tries++) {
+    const r = 6 + rand() * 14;
+    const x = x0 + rand() * (x1 - x0);
+    const y = y0 + rand() * (y1 - y0);
+    const clear = samples.every((p) => Math.hypot(p.x - x, p.y - y) > hw + 24 + r);
+    if (!clear || placed.some((m) => Math.hypot(m.x - x, m.y - y) < m.r + r + 4)) continue;
+    placed.push({ x, y, r });
+    const topY = -10 + rand() * 22;
+    const m = mesa(r, topY, CLIFF_BOTTOM - 10, 7 + Math.floor(rand() * 3));
+    m.position.x = x;
+    m.position.z = -y;
+    m.rotation.y = rand() * 6.28;
+    group.add(m);
+  }
+  return group;
+}
+
+/** Islands and plain walls from `level.walls`: thick boxes become octagonal islands with a teal rim. */
+function buildWalls(walls: readonly Box[]): THREE.Group {
+  const group = new THREE.Group();
+  for (const wall of walls) {
+    if (Math.min(wall.hx, wall.hy) < 1) {
+      const slab = new THREE.Mesh(
+        new THREE.BoxGeometry(wall.hx * 2, BANK_TOP + 0.4, wall.hy * 2),
+        new THREE.MeshLambertMaterial({ color: COLORS.top }),
+      );
+      applyPose(slab, wall, (BANK_TOP - 0.4) / 2);
+      group.add(slab);
+      continue;
+    }
+    const r = Math.max(wall.hx, wall.hy) * 1.08;
+    const island = mesa(r, BANK_TOP, -1.5);
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(r * 1.02, 0.28, 6, 8),
+      new THREE.MeshLambertMaterial({ color: COLORS.teal }),
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = BANK_TOP - island.position.y;
+    island.add(rim);
+    island.position.x = wall.x;
+    island.position.z = -wall.y;
+    island.rotation.y = wall.rot + Math.PI / 8;
+    group.add(island);
+  }
+  return group;
+}
+
 const SWAY: Record<string, SwayOptions> = {
-  tree_a: { height: 7, strength: 0.14, breathe: 0.025 },
-  tree_b: { height: 8, strength: 0.12, breathe: 0.02 },
+  tree_round: { height: 5, strength: 0.12, breathe: 0.025 },
   bush: { height: 1.4, strength: 0.07, breathe: 0.03 },
-  bamboo: { height: 4.5, strength: 0.45 },
   fern: { height: 0.9, strength: 0.1 },
   grass: { height: 0.8, strength: 0.14 },
-  reeds: { height: 1.8, strength: 0.22, react: 1 },
 };
 
 export type Terrain = {
@@ -96,173 +339,21 @@ export type Terrain = {
   onEvent(e: SimEvent): void;
 };
 
-export function buildTerrain(level: LevelData, kit: Kit): Terrain {
+/** `water` is the shared animated water material (env.ts), used for the channel ribbon. */
+export function buildTerrain(level: LevelData, kit: Kit, water: THREE.Material): Terrain {
   const root = new THREE.Group();
   const wind = createWind();
-  const foam = createFoam(wind.uniforms.uTime);
-  root.add(foam.group);
   const rand = mulberry32(hashString(level.name));
-  const range = (a: number, b: number) => a + rand() * (b - a);
 
-  const path = [level.spawn, ...level.checkpoints];
-  const centroid = {
-    x: path.reduce((s, p) => s + p.x, 0) / path.length,
-    y: path.reduce((s, p) => s + p.y, 0) / path.length,
-  };
-
-  const clay = [
-    clayTexture("#f08f7f", "#d9705f", "#f7b27a"),
-    clayTexture("#f7b27a", "#e0955a", "#f08f7f"),
-  ].map((map) => new THREE.MeshLambertMaterial({ map }));
-  const grass = new THREE.MeshLambertMaterial({ color: GRASS });
-
-  const rects: Rect[] = [];
-  const rimMatrices: THREE.Matrix4[] = [];
-  const waterDecor = { lily: [] as THREE.Matrix4[], reeds: [] as THREE.Matrix4[] };
-  const waterRocks: Box[] = [];
-  const foamMatrices: THREE.Matrix4[] = [];
-  const rocksInWater: { x: number; y: number; r: number }[] = [];
-
-  const banks: Box[] = [];
-  for (const wall of level.walls) {
-    if (Math.min(wall.hx, wall.hy) >= 1) {
-      const rock = kit.clone("rock");
-      rock.scale.set(wall.hx, ((wall.hx + wall.hy) / 2) * 0.9, wall.hy);
-      applyPose(rock, wall);
-      root.add(rock);
-      waterRocks.push(wall);
-      rocksInWater.push({ x: wall.x, y: wall.y, r: Math.max(wall.hx, wall.hy) });
-    } else banks.push(wall);
-  }
-
-  const free = (x: number, y: number) =>
-    distToPath(path, x, y) > 3.5 &&
-    rocksInWater.every((r) => Math.hypot(x - r.x, y - r.y) > r.r + 1.5);
-  banks.forEach((wall, wi) => {
-    const f = frameOf(wall.rot);
-    const thinIsX = wall.hx < wall.hy;
-    const thin = thinIsX ? wall.hx : wall.hy;
-    const longHalf = thinIsX ? wall.hy : wall.hx;
-    // Thin-axis and long-axis unit vectors in sim space.
-    const tx = thinIsX ? f.ux : f.vx;
-    const ty = thinIsX ? f.uy : f.vy;
-    const lx = thinIsX ? f.vx : f.ux;
-    const ly = thinIsX ? f.vy : f.uy;
-    const out = Math.sign((wall.x - centroid.x) * tx + (wall.y - centroid.y) * ty) || 1;
-    const nx = tx * out;
-    const ny = ty * out;
-
-    // Plateau slab on the outward side.
-    const off = thin + PLATEAU_DEPTH / 2;
-    const px = wall.x + nx * off;
-    const py = wall.y + ny * off;
-    const w = thinIsX ? PLATEAU_DEPTH : (longHalf + PLATEAU_EXTEND) * 2;
-    const d = thinIsX ? (longHalf + PLATEAU_EXTEND) * 2 : PLATEAU_DEPTH;
-    const sideMat = clay[wi % clay.length]!;
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(w, TOP_Y - BOTTOM_Y, d), [
-      sideMat,
-      sideMat,
-      grass,
-      sideMat,
-      sideMat,
-      sideMat,
-    ]);
-    applyPose(slab, { x: px, y: py, rot: wall.rot }, (TOP_Y + BOTTOM_Y) / 2 + wi * 0.003);
-    slab.receiveShadow = true;
-    root.add(slab);
-    rects.push({
-      x: px,
-      y: py,
-      rot: wall.rot,
-      hu: thinIsX ? PLATEAU_DEPTH / 2 : longHalf + PLATEAU_EXTEND,
-      hv: thinIsX ? longHalf + PLATEAU_EXTEND : PLATEAU_DEPTH / 2,
-    });
-
-    // Bamboo rim along the inner face.
-    const count = Math.max(1, Math.round(longHalf));
-    const seg = (longHalf * 2) / count;
-    const rimRot = wall.rot + (thinIsX ? Math.PI / 2 : 0);
-    const inward = thin - 0.15;
-    for (let k = 0; k < count; k++) {
-      const t = -longHalf + (k + 0.5) * seg;
-      rimMatrices.push(
-        poseMatrix(
-          { x: wall.x + lx * t - nx * inward, y: wall.y + ly * t - ny * inward, rot: rimRot },
-          0,
-          [seg / 2, 1, 1],
-        ),
-      );
+  root.add(buildWalls(level.walls));
+  if (level.channel) {
+    const channel = buildChannel(level.channel, kit, water, rand);
+    root.add(channel.group, scatterMesas(channel.samples, level.channel.halfWidth, rand));
+    for (const [name, list] of Object.entries(channel.decor)) {
+      if (!list.length) continue;
+      const g = kit.instance(name, list);
+      root.add(SWAY[name] ? wind.sway(g, SWAY[name]) : g);
     }
-
-    for (let k = 0; k < count; k++) {
-      const t = -longHalf + (k + 0.5) * seg;
-      foamMatrices.push(
-        poseMatrix(
-          { x: wall.x + lx * t - nx * thin, y: wall.y + ly * t - ny * thin, rot: rimRot },
-          0.05,
-          [seg, 1, 1.5],
-        ),
-      );
-    }
-
-    // Lilies and reeds in the water along the bank, away from the raft path and rocks.
-    const place = (list: THREE.Matrix4[], t: number, inwardDist: number, scale: number) => {
-      const x = wall.x + lx * t - nx * (thin + inwardDist);
-      const y = wall.y + ly * t - ny * (thin + inwardDist);
-      if (free(x, y))
-        list.push(poseMatrix({ x, y, rot: range(0, 6.28) }, 0, [scale, scale, scale]));
-    };
-    for (let k = 0; k < Math.floor(longHalf / 3); k++) {
-      const t = range(-longHalf + 2, longHalf - 2);
-      const dist = range(1.4, 5);
-      const n = 2 + Math.floor(rand() * 3);
-      for (let j = 0; j < n; j++)
-        place(waterDecor.lily, t + range(-0.9, 0.9), dist + range(-0.7, 0.7), range(0.8, 1.2));
-    }
-    for (let k = 0; k < Math.floor(longHalf / 4); k++) {
-      const t = range(-longHalf + 2, longHalf - 2);
-      const n = 2 + Math.floor(rand() * 3);
-      for (let j = 0; j < n; j++)
-        place(waterDecor.reeds, t + range(-0.6, 0.6), range(0.6, 1.4), range(0.9, 1.4));
-    }
-  });
-
-  foam.rocks(waterRocks);
-  if (foamMatrices.length) foam.strips(foamMatrices);
-  if (rimMatrices.length) root.add(kit.instance("rim", rimMatrices));
-  if (waterDecor.lily.length) root.add(wind.drift(kit.instance("lily", waterDecor.lily)));
-  if (waterDecor.reeds.length)
-    root.add(wind.sway(kit.instance("reeds", waterDecor.reeds), SWAY.reeds!));
-
-  // Plateau-top decor.
-  const decor: Record<string, { density: number; scale: [number, number] }> = {
-    tree_a: { density: 0.0035, scale: [0.9, 1.5] },
-    tree_b: { density: 0.0035, scale: [0.9, 1.5] },
-    bush: { density: 0.005, scale: [0.8, 1.4] },
-    bamboo: { density: 0.0015, scale: [0.9, 1.4] },
-    rock: { density: 0.0015, scale: [0.8, 1.6] },
-    fern: { density: 0.004, scale: [0.8, 1.3] },
-    grass: { density: 0.012, scale: [0.8, 1.5] },
-  };
-  for (const [name, spec] of Object.entries(decor)) {
-    const list: THREE.Matrix4[] = [];
-    for (const r of rects) {
-      const f = frameOf(r.rot);
-      const n = Math.round(r.hu * r.hv * 4 * spec.density);
-      for (let i = 0; i < n; i++) {
-        const u = range(-r.hu + 1.5, r.hu - 1.5);
-        const v = range(-r.hv + 1.5, r.hv - 1.5);
-        const x = r.x + f.ux * u + f.vx * v;
-        const y = r.y + f.uy * u + f.vy * v;
-        // Keep decor off the water-facing edge: distance to every bank wall's outer face.
-        if (banks.some((b) => nearWater(b, x, y, 2.5))) continue;
-        const s = range(spec.scale[0], spec.scale[1]);
-        list.push(poseMatrix({ x, y, rot: range(0, 6.28) }, TOP_Y, [s, s, s]));
-      }
-    }
-    if (!list.length) continue;
-    const group = kit.instance(name, list);
-    root.add(SWAY[name] ? wind.sway(group, SWAY[name]) : group);
   }
 
   const gates = createGates(level, kit, wind.uniforms.uTime);
@@ -276,14 +367,4 @@ export function buildTerrain(level: LevelData, kit: Kit): Terrain {
     },
     onEvent: (e) => gates.onEvent(e),
   };
-}
-
-/** True when (x, y) is within `margin` of a bank wall's water-facing side (either side, since the slab is outward). */
-function nearWater(b: Box, x: number, y: number, margin: number): boolean {
-  const f = frameOf(b.rot);
-  const dx = x - b.x;
-  const dy = y - b.y;
-  const u = dx * f.ux + dy * f.uy;
-  const v = dx * f.vx + dy * f.vy;
-  return Math.abs(u) < b.hx + margin && Math.abs(v) < b.hy + margin;
 }

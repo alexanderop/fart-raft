@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap");
+
 :root {
   --hud-bg: #2a8fd6;
   --hud-fg: #fff;
@@ -33,19 +35,98 @@ canvas {
   letter-spacing: 0.02em;
 }
 
-.hud-status {
+.hud-track {
   position: absolute;
-  top: 16px;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 12px;
+  border-radius: 0 0 8px 8px;
+  background: rgb(255 255 255 / 0.85);
+  box-shadow: 0 2px 0 rgb(29 58 87 / 0.35);
+  -webkit-text-stroke: 0;
+}
+
+.track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 0 0 8px 0;
+  background: #7cc7f2;
+}
+
+.track-mark {
+  position: absolute;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: #5b6b7d;
+}
+
+.track-mark.done {
+  background: #3e9c4a;
+}
+
+.track-raft {
+  position: absolute;
+  top: 6px;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  translate: 0 -50%;
+  border-radius: 50%;
+  background: #ffe45c;
+  border: 3px solid var(--outline);
+}
+
+.hud-timer,
+.hud-farts {
+  position: absolute;
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 5px;
+  border-radius: 0 0 16px 16px;
+  background: #2b3441;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-stroke: 0;
+  box-shadow: 0 3px 0 rgb(0 0 0 / 0.25);
+}
+
+.hud-timer {
   left: 50%;
   translate: -50% 0;
-  padding: 4px 26px 6px;
-  border-radius: 999px;
-  background: var(--hud-bg);
-  border: 4px solid #fff;
-  box-shadow: 0 5px 0 var(--outline);
-  font-size: 32px;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
+}
+
+.hud-farts {
+  right: 12px;
+  border-radius: 0 0 16px 16px;
+  padding: 4px 14px 5px 12px;
+}
+
+.hud-timer svg,
+.hud-farts svg {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: #b9c6d6;
+}
+
+.hud-farts svg {
+  color: #b6e36c;
+}
+
+.hud-timer.pop {
+  animation: pill-pop 0.5s;
+}
+
+.hud-farts.pop {
+  animation: fart-pop 0.25s;
 }
 
 .hud-toast,
@@ -60,10 +141,14 @@ canvas {
 }
 
 .hud-toast {
-  top: 35%;
-  font-size: 64px;
-  -webkit-text-stroke: 10px var(--outline);
-  text-shadow: 0 6px 0 var(--outline);
+  top: 30%;
+  padding: 0 12px;
+  font-size: clamp(36px, 11vw, 76px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  -webkit-text-stroke: 12px var(--outline);
+  text-shadow: 0 7px 0 var(--outline);
 }
 
 .hud-toast.slam.on {
@@ -75,8 +160,8 @@ canvas {
 }
 
 .hud-count {
-  top: 22%;
-  font-size: 220px;
+  top: 20%;
+  font-size: clamp(120px, 34vw, 220px);
   line-height: 1;
   color: #fff;
   -webkit-text-stroke: 16px var(--outline);
@@ -87,16 +172,13 @@ canvas {
   animation: count-pop 1s both;
 }
 
-.hud-status.pop {
-  animation: pill-pop 0.5s;
-}
-
 .hud-finish {
   position: absolute;
   top: 50%;
   left: 50%;
   translate: -50% -50%;
-  padding: 24px 56px 28px;
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px 24px 24px;
   border-radius: 40px;
   background: var(--hud-bg);
   border: 6px solid #fff;
@@ -112,13 +194,15 @@ canvas {
 }
 
 .finish-title {
-  font-size: 48px;
+  font-size: clamp(36px, 10vw, 52px);
+  text-transform: uppercase;
+  -webkit-text-stroke: 10px var(--outline);
   font-weight: 900;
   color: #ffe45c;
 }
 
 .finish-time {
-  font-size: 96px;
+  font-size: clamp(44px, 14vw, 80px);
   font-weight: 900;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
@@ -293,52 +377,43 @@ canvas {
   }
 }
 
-.hud-gas {
+.hud-tags .tag {
   position: absolute;
-  bottom: 16px;
-  left: 16px;
+  top: 0;
+  left: 0;
   display: grid;
-  gap: 6px;
+  justify-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  will-change: transform;
 }
 
-.gas {
-  position: relative;
-  width: 200px;
-  height: 26px;
-  border-radius: 999px;
-  background: rgb(29 58 87 / 0.7);
-  border: 3px solid #fff;
-  box-shadow: 0 3px 0 var(--outline);
-  overflow: hidden;
+.tag span {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  -webkit-text-stroke: 4px var(--outline);
+  paint-order: stroke fill;
+  letter-spacing: 0.02em;
 }
 
-.gas span {
-  position: absolute;
-  inset: 0 8px;
-  z-index: 1;
-  font-size: 14px;
-  font-weight: 800;
-  line-height: 20px;
-  -webkit-text-stroke: 3px var(--outline);
-}
-
-.gas i {
+.tag i {
   display: block;
-  height: 100%;
-  background: var(--gas);
+  width: 40px;
+  height: 6px;
   border-radius: 999px;
+  background: var(--gas);
+  box-shadow: 0 0 0 2px var(--outline);
 }
 
-.gas.draining i {
+.tag.draining i {
   animation: gas-pulse 0.35s ease-in-out infinite alternate;
 }
 
-.gas.low {
-  animation: gas-wobble 0.3s ease-in-out infinite;
-}
-
-.gas.low i {
+.tag.low i {
   background: #ff7a59;
+  animation: gas-flash 0.3s ease-in-out infinite alternate;
 }
 
 @keyframes gas-pulse {
@@ -347,15 +422,15 @@ canvas {
   }
 }
 
-@keyframes gas-wobble {
-  0%,
-  100% {
-    rotate: -1.5deg;
-    translate: -2px 0;
+@keyframes gas-flash {
+  to {
+    opacity: 0.45;
   }
+}
+
+@keyframes fart-pop {
   50% {
-    rotate: 1.5deg;
-    translate: 2px 0;
+    scale: 1.18;
   }
 }
 
@@ -374,9 +449,10 @@ canvas {
   }
 
   .hud-finish.on .finish-time,
-  .hud-status.pop,
-  .gas.low,
-  .gas.draining i {
+  .hud-timer.pop,
+  .hud-farts.pop,
+  .tag.low i,
+  .tag.draining i {
     animation: none;
   }
 }

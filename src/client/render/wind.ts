@@ -41,27 +41,8 @@ wp.xyz = pv + (wp.xyz - pv) * vec3(mix(1.0, br, h), mix(1.0, br, h), mix(1.0, br
 vec4 mvPosition = modelViewMatrix * wp;
 gl_Position = projectionMatrix * mvPosition;`;
 
-/** Lily pads: bob, drift, turn slowly, and slide away from the raft. */
-const lilyBody = /* glsl */ `
-vec4 wp = instanceMatrix * vec4(transformed, 1.0);
-vec3 pv = aPivot;
-float ph = pv.x * 0.7 + pv.z * 1.3;
-vec3 rel = wp.xyz - pv;
-float a = sin(uTime * 0.35 + ph) * 0.35 * uAmp;
-rel.xz = mat2(cos(a), -sin(a), sin(a), cos(a)) * rel.xz;
-vec2 toRaft = pv.xz - uRaft;
-float rd = max(length(toRaft), 0.001);
-float near = 1.0 - smoothstep(0.0, 5.5, rd);
-vec2 drift = vec2(sin(uTime * 0.3 + ph), cos(uTime * 0.23 + ph * 1.7)) * 0.3 + toRaft / rd * near * 1.6;
-rel.y += rel.x * sin(uTime * 1.2 + ph) * 0.08 * uAmp;
-wp.xyz = pv + rel;
-wp.xz += drift * uAmp;
-wp.y += (sin(uTime * 1.6 + ph) * 0.035 + near * sin(uTime * 8.0 + ph) * 0.03) * uAmp;
-vec4 mvPosition = modelViewMatrix * wp;
-gl_Position = projectionMatrix * mvPosition;`;
-
 /**
- * Shared wind and raft-proximity uniforms. `sway`/`drift` patch an InstancedMesh group
+ * Shared wind and raft-proximity uniforms. `sway` patches an InstancedMesh group
  * (from `kit.instance`) so all motion runs on the GPU; `update` is the only per-frame cost.
  */
 const scratch = new THREE.Object3D();
@@ -93,10 +74,6 @@ export function createWind() {
     sway(group: THREE.Object3D, opts: SwayOptions) {
       const full = { breathe: 0, react: 0, ...opts };
       patch(group, `sway-${JSON.stringify(full)}`, swayBody(full));
-      return group;
-    },
-    drift(group: THREE.Object3D) {
-      patch(group, "lily", lilyBody);
       return group;
     },
     update(time: number, raft: Pose) {

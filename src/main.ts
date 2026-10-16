@@ -1,5 +1,5 @@
 import "./style.css";
-import pond from "../courses/pond.json";
+import canyon from "../courses/canyon.json";
 import { startLoop } from "./client/loop";
 import { createCameraShake } from "./client/fx/cameraShake";
 import { createConfetti } from "./client/fx/confetti";
@@ -8,7 +8,7 @@ import { createWake } from "./client/fx/wake";
 import { lerpPose } from "./client/render/coords";
 import { gateLayout } from "./client/render/gates";
 import { createScene } from "./client/render/scene";
-import { createHud } from "./client/ui/hud";
+import { createHud, progressTrack } from "./client/ui/hud";
 import {
   configFromUrl,
   configToSearch,
@@ -25,7 +25,7 @@ import { createSim, initPhysics, snapshot, step } from "./sim/sim";
 import type { LevelData, SimEvent, Snapshot } from "./sim/types";
 import { parseLevel } from "./sim/level";
 
-const level = parseLevel(pond);
+const level = parseLevel(canyon);
 const app = document.querySelector<HTMLElement>("#app")!;
 
 const [, config] = await Promise.all([
@@ -85,7 +85,12 @@ const particles = createParticles(view.scene);
 const wake = createWake(view.scene);
 const confetti = createConfetti(view.scene);
 const shake = createCameraShake();
-const hud = createHud(app, seatLabels);
+const hud = createHud(app, {
+  seatLabels,
+  seats: crew,
+  camera: view.camera,
+  progress: progressTrack(level),
+});
 
 let lastFrame = performance.now();
 
@@ -122,6 +127,6 @@ startLoop(
     wake.update(dt, lerpPose(prev.raft, curr.raft, alpha));
     confetti.update(dt);
     view.draw(prev, curr, alpha, shake.update(dt));
-    hud.draw(curr);
+    hud.draw(curr, lerpPose(prev.raft, curr.raft, alpha));
   },
 );

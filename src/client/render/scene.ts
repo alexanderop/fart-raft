@@ -37,17 +37,17 @@ export async function createScene(
   canvasHost.append(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(HAZE, 70, 280);
+  scene.fog = new THREE.Fog(HAZE, 45, 170);
   const sky = createSky();
   scene.add(sky);
-  scene.add(new THREE.HemisphereLight(0xeaf6ff, 0xf0b79a, 1.9));
+  scene.add(new THREE.HemisphereLight(0xf2f8ff, 0xf3c3a4, 2.2));
 
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
+  const sun = new THREE.DirectionalLight(0xfff6e8, 1.3);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const cam = sun.shadow.camera;
-  cam.left = cam.bottom = -18;
-  cam.right = cam.top = 18;
+  cam.left = cam.bottom = -30;
+  cam.right = cam.top = 30;
   cam.near = 1;
   cam.far = 120;
   sun.shadow.bias = -0.0004;
@@ -55,14 +55,15 @@ export async function createScene(
   scene.add(sun, sun.target);
 
   const water = createWater();
-  scene.add(water.mesh);
-  const terrain = buildTerrain(level, kit);
+  if (!level.channel) scene.add(water.plane);
+  const terrain = buildTerrain(level, kit, water.material);
   scene.add(terrain.group);
 
   const hazardMeshes = new Map(
     level.hazards.map((h) => {
-      const mesh = kit.clone("spinner");
-      mesh.scale.set(h.hx, h.hy, h.hy);
+      const mesh = kit.clone(h.kind);
+      if (h.kind === "spinner") mesh.scale.set(h.hx, h.hy, h.hy);
+      else mesh.scale.set(h.hx, 1, 1);
       scene.add(mesh);
       return [h.id, mesh] as const;
     }),
@@ -106,7 +107,12 @@ export async function createScene(
       curr.hazards.forEach((h, i) => {
         const def = level.hazards.find((d) => d.id === h.id);
         const mesh = hazardMeshes.get(h.id);
-        if (mesh && def) applyPose(mesh, lerpPose(prev.hazards[i] ?? h, h, alpha), def.hy);
+        if (mesh && def)
+          applyPose(
+            mesh,
+            lerpPose(prev.hazards[i] ?? h, h, alpha),
+            def.kind === "spinner" ? def.hy : 0,
+          );
       });
       chase.update(camera, dt, pose, curr, motion.vel, motion.thrust, shake);
       // Tight shadow frustum that follows the raft.

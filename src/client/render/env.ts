@@ -1,8 +1,9 @@
 import * as THREE from "three";
 
-export const HAZE = 0xd3ebf6;
+/** Pale sky haze: the fog color, and what the cliffs fade into far below. */
+export const HAZE = 0xeaf5fb;
 
-/** Pastel gradient dome. Follows the camera so it never clips. */
+/** Soft gradient dome, light blue overhead to near-white haze at and below the horizon. */
 export function createSky(): THREE.Mesh {
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(500, 24, 16),
@@ -12,8 +13,8 @@ export function createSky(): THREE.Mesh {
       fog: false,
       toneMapped: false,
       uniforms: {
-        top: { value: new THREE.Color(0x58a8ec) },
-        mid: { value: new THREE.Color(0x9ed2f6) },
+        top: { value: new THREE.Color(0x8cc8f0) },
+        mid: { value: new THREE.Color(0xc9e6f7) },
         horizon: { value: new THREE.Color(HAZE) },
       },
       vertexShader: /* glsl */ `
@@ -27,8 +28,8 @@ export function createSky(): THREE.Mesh {
         varying vec3 vDir;
         void main() {
           float h = clamp(vDir.y, 0.0, 1.0);
-          vec3 c = mix(horizon, mid, smoothstep(0.0, 0.18, h));
-          c = mix(c, top, smoothstep(0.15, 0.7, h));
+          vec3 c = mix(horizon, mid, smoothstep(0.02, 0.25, h));
+          c = mix(c, top, smoothstep(0.25, 0.8, h));
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }`,
@@ -38,10 +39,17 @@ export function createSky(): THREE.Mesh {
   return sky;
 }
 
-/** Bright cartoon water: flat blue with slow caustic-ish bands and tiny twinkles, driven by a time uniform. */
+/**
+ * Flat, saturated cartoon water. Vertex colors carry the bank-to-center gradient; the shader
+ * adds only a slow, faint shimmer so it stays as calm as the reference.
+ */
 export function createWater() {
   const uTime = { value: 0 };
-  const material = new THREE.MeshLambertMaterial({ color: 0x2cb4f2 });
+  const material = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+  });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uTime;
     shader.vertexShader = shader.vertexShader
@@ -51,33 +59,27 @@ export function createWater() {
         "#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;",
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        /* glsl */ `#include <common>
-        uniform float uTime; varying vec3 vWPos;
-        float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`,
-      )
+      .replace("#include <common>", "#include <common>\nuniform float uTime; varying vec3 vWPos;")
       .replace(
         "#include <color_fragment>",
         /* glsl */ `#include <color_fragment>
         vec2 p = vWPos.xz;
-        float rip = sin(p.x * 0.7 + uTime * 0.9) * sin(p.y * 0.6 - uTime * 0.7)
-                  + sin((p.x + p.y) * 0.35 + uTime * 0.5);
-        diffuseColor.rgb += vec3(0.02, 0.04, 0.05) * rip;
-        vec2 g = p * 2.5;
-        vec2 cell = floor(g);
-        float ph = hash21(cell) * 6.2831;
-        float tw = pow(max(0.0, sin(uTime * 1.6 + ph)), 12.0);
-        float on = step(0.82, hash21(cell + 7.0));
-        float d = length(fract(g) - 0.5);
-        diffuseColor.rgb += tw * on * smoothstep(0.3, 0.0, d) * 0.55;`,
+        float rip = sin(p.x * 0.5 + uTime * 0.8) * sin(p.y * 0.45 - uTime * 0.6);
+        diffuseColor.rgb += vec3(0.015, 0.025, 0.03) * rip;`,
       );
   };
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), material);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.receiveShadow = true;
+  // Open water for courses without a channel; channel courses only use the material.
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), material);
+  plane.rotation.x = -Math.PI / 2;
+  plane.receiveShadow = true;
+  const flat = new THREE.Color(0x3cb8f2);
+  const colors = new Float32Array(plane.geometry.attributes.position!.count * 3).map(
+    (_, i) => [flat.r, flat.g, flat.b][i % 3]!,
+  );
+  plane.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return {
-    mesh,
+    material,
+    plane,
     update(seconds: number) {
       uTime.value = seconds;
     },
