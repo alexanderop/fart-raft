@@ -7,6 +7,24 @@ export const CONTROLS = ["WASD · Space", "Arrows · Enter", "IJKL · U", "Num 8
 
 const STORAGE_KEY = "fart-raft:menu";
 
+/** What the player chose to start: a couch game on this machine, or a seat on a server. */
+export type Launch = { kind: "local"; config: GameConfig } | { kind: "online"; url: string };
+
+const defaultServerUrl = () => `ws://${location.hostname}:3000/rpc`;
+
+/** `?online=1` joins the server on this host, `?online=<ws-url>` a specific one. */
+export function launchFromUrl(search: string): Launch | undefined {
+  const online = new URLSearchParams(search).get("online");
+  if (online !== null) return { kind: "online", url: online === "1" ? defaultServerUrl() : online };
+  const config = configFromUrl(search);
+  return config && { kind: "local", config };
+}
+
+export const launchToSearch = (launch: Launch): string =>
+  launch.kind === "online"
+    ? `?online=${encodeURIComponent(launch.url)}`
+    : configToSearch(launch.config);
+
 /** Crew size for a config: a full raft with bots, otherwise one seat per human. */
 export const crewSize = (c: GameConfig): number => (c.bots ? MAX_CREW : c.humans);
 
@@ -53,8 +71,8 @@ function saveLast(c: GameConfig): void {
   }
 }
 
-/** Start screen: pick how many people are playing and whether bots fill the empty seats. */
-export function showMenu(host: HTMLElement): Promise<GameConfig> {
+/** Start screen: pick how many people are playing and whether bots fill the empty seats, or go online. */
+export function showMenu(host: HTMLElement): Promise<Launch> {
   let config = loadLast();
   host.insertAdjacentHTML(
     "beforeend",
@@ -77,6 +95,7 @@ export function showMenu(host: HTMLElement): Promise<GameConfig> {
         </label>
         <ol class="menu-seats" data-seats></ol>
         <button type="button" class="menu-start" data-start>Start</button>
+        <button type="button" class="menu-online" data-online>Play online</button>
         <p class="menu-hint">Fart = up key, aim = left / right · R restarts · Esc menu</p>
       </div>
     </div>`,
@@ -86,6 +105,7 @@ export function showMenu(host: HTMLElement): Promise<GameConfig> {
   const bots = root.querySelector<HTMLInputElement>("[data-bots]")!;
   const seats = root.querySelector<HTMLElement>("[data-seats]")!;
   const start = root.querySelector<HTMLButtonElement>("[data-start]")!;
+  const online = root.querySelector<HTMLButtonElement>("[data-online]")!;
 
   const render = () => {
     for (const b of playerButtons) {
@@ -117,11 +137,14 @@ export function showMenu(host: HTMLElement): Promise<GameConfig> {
   start.focus();
 
   return new Promise((resolve) => {
-    const go = () => {
+    const launch = (choice: Launch) => {
       removeEventListener("keydown", onKey);
-      saveLast(config);
       root.remove();
-      resolve(config);
+      resolve(choice);
+    };
+    const go = () => {
+      saveLast(config);
+      launch({ kind: "local", config });
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.code === "Enter" || e.code === "Space") {
@@ -134,6 +157,7 @@ export function showMenu(host: HTMLElement): Promise<GameConfig> {
       if (n >= 0 && n <= MAX_CREW) pick(n);
     };
     start.addEventListener("click", go);
+    online.addEventListener("click", () => launch({ kind: "online", url: defaultServerUrl() }));
     addEventListener("keydown", onKey);
   });
 }

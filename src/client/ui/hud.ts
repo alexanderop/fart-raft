@@ -123,6 +123,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const marks = [...host.querySelectorAll<HTMLElement>(".track-mark")];
   const tags = [...host.querySelectorAll<HTMLElement>(".tag")];
   const fills = tags.map((g) => g.querySelector<HTMLElement>("i")!);
+  const labelSpans = tags.map((g) => g.querySelector<HTMLElement>("span")!);
   const lastGas = tags.map(() => GAS_MAX);
 
   let shownCount = "";
@@ -183,6 +184,13 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   }
 
   return {
+    /** Online, riders come and go: the server says who sits where. */
+    setLabels(labels: readonly string[]) {
+      labelSpans.forEach((span, i) => {
+        const label = labels[i];
+        if (label !== undefined && span.textContent !== label) span.textContent = label;
+      });
+    },
     onEvent(e: SimEvent) {
       if (e.type === "go") show("GO!", "slam");
       if (e.type === "checkpoint") {

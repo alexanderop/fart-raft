@@ -9,88 +9,62 @@ import { createWake } from "./client/fx/wake.ts";
 import { lerpPose } from "./client/render/coords.ts";
 import { gateLayout } from "./client/render/gates.ts";
 import { createScene } from "./client/render/scene.ts";
+import { localSession, onlineSession, type Session } from "./client/session.ts";
 import { createHud, progressTrack } from "./client/ui/hud.ts";
-import {
-  configFromUrl,
-  configToSearch,
-  CONTROLS,
-  crewSize,
-  showMenu,
-  type GameConfig,
-} from "./client/ui/menu.ts";
-import { botSource } from "./input/bot.ts";
-import { keyboardSource, listenKeyboard, PLAYER_KEYS, WASD_OR_ARROWS } from "./input/keyboard.ts";
-import { createSeats, readSeats, type InputSource } from "./input/sources.ts";
-import { crewZones, STEP, type Zone } from "./sim/constants.ts";
-import { createSim, initPhysics, snapshot, step } from "./sim/sim.ts";
-import type { LevelData, SimEvent, Snapshot } from "./sim/types.ts";
+import { showBanner } from "./client/ui/banner.ts";
+import { launchFromUrl, launchToSearch, showMenu, type Launch } from "./client/ui/menu.ts";
+import { listenKeyboard } from "./input/keyboard.ts";
+import { STEP } from "./sim/constants.ts";
+import { initPhysics } from "./sim/sim.ts";
 import { parseLevel } from "./sim/level.ts";
 
 const level = parseLevel(canyon);
 const app = document.querySelector<HTMLElement>("#app")!;
 
-const [, config] = await Promise.all([
-  initPhysics(),
-  configFromUrl(location.search) ?? showMenu(app),
-]);
-history.replaceState(null, "", configToSearch(config));
-
-const crew = crewZones(crewSize(config));
+const physics = initPhysics();
+const launch = launchFromUrl(location.search) ?? (await showMenu(app));
+history.replaceState(null, "", launchToSearch(launch));
 
 /** The camera's forward direction on the water (sim radians): keys walk riders relative to it. */
 let cameraHeading = level.spawn.rot;
+const heading = () => cameraHeading;
 
-/**
- * Fill seats from the menu choice. Humans take the first seats, bots the rest. Each one is
- * just an InputSource, so a networked player later is one more `seats[i] = …` line.
- */
-function fillSeats(
-  cfg: GameConfig,
-  seats: readonly Zone[],
-  observe: () => Snapshot,
-  lvl: LevelData,
-): InputSource[] {
-  const sources = createSeats(seats.length);
-  for (let i = 0; i < seats.length; i++) {
-    sources[i] =
-      i >= cfg.humans
-        ? botSource(i, seats, lvl, observe)
-        : keyboardSource(cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[i]!, () => cameraHeading);
+async function startSession(choice: Launch): Promise<Session> {
+  if (choice.kind === "local") return localSession(level, choice.config, heading, physics);
+  const connecting = showBanner(app, "Connecting…", "info");
+  try {
+    return await onlineSession(choice.url, heading, (reason) =>
+      showBanner(app, `${reason} · Esc for menu`, "error"),
+    );
+  } catch (error) {
+    showBanner(
+      app,
+      `${error instanceof Error ? error.message : "Could not connect"} · Esc for menu`,
+      "error",
+    );
+    throw error;
+  } finally {
+    connecting();
   }
-  return sources;
 }
 
-const seatLabels = crew.map((_, i) =>
-  i >= config.humans ? "Bot" : config.humans === 1 ? "You" : `P${i + 1} · ${CONTROLS[i]}`,
-);
-
-let sim = createSim(level, crew);
-let prev = snapshot(sim);
-let curr = prev;
-let pending: SimEvent[] = [];
-// Bots read the latest snapshot, the same data a server would broadcast.
-let seats = fillSeats(config, crew, () => curr, level);
-listenKeyboard(window);
-
 addEventListener("keydown", (e) => {
-  if (e.code === "Escape") {
-    location.href = location.pathname; // back to the menu
-    return;
-  }
-  if (e.code !== "KeyR") return;
-  sim.world.free();
-  sim = createSim(level, crew);
-  prev = curr = snapshot(sim);
-  seats = fillSeats(config, crew, () => curr, level);
+  if (e.code === "Escape") location.href = location.pathname; // back to the menu
 });
 
-const view = await createScene(app, level, crew);
+const session = await startSession(launch);
+listenKeyboard(window);
+addEventListener("keydown", (e) => {
+  if (e.code === "KeyR") session.restart();
+});
+
+const view = await createScene(app, level, session.crew);
 const particles = createParticles(view.scene);
 const wake = createWake(view.scene);
 const confetti = createConfetti(view.scene);
 const shake = createCameraShake();
 const hud = createHud(app, {
-  seatLabels,
+  seatLabels: session.seatLabels(),
   camera: view.camera,
   progress: progressTrack(level),
 });
@@ -108,17 +82,14 @@ function celebrate(index: number) {
 
 startLoop(
   STEP,
-  () => {
-    prev = curr;
-    pending.push(...step(sim, readSeats(seats)));
-    curr = snapshot(sim);
-  },
-  (alpha) => {
+  () => session.tick(),
+  (loopAlpha) => {
     // Fx run on real frame time (clamped), the sim itself stays on its fixed step.
     const now = performance.now();
     const dt = Math.min((now - lastFrame) / 1000, 0.05);
     lastFrame = now;
-    for (const e of pending) {
+    const { prev, curr, alpha, events } = session.frame(loopAlpha);
+    for (const e of events) {
       particles.onEvent(e);
       shake.onEvent(e);
       hud.onEvent(e);
@@ -126,7 +97,7 @@ startLoop(
       if (e.type === "checkpoint") celebrate(e.index);
       view.onEvent(e);
     }
-    pending = [];
+    hud.setLabels(session.seatLabels());
     particles.update(dt);
     wake.update(dt, lerpPose(prev.raft, curr.raft, alpha));
     confetti.update(dt);
