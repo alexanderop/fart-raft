@@ -1,0 +1,168 @@
+/* Lives pill, hurt flash and the "raft sank" screen. Kept apart from style.css on purpose. */
+
+.hud-lives {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px 5px 10px;
+  border-radius: 0 0 16px 16px;
+  background: #2b3441;
+  box-shadow: 0 3px 0 rgb(0 0 0 / 0.25);
+  -webkit-text-stroke: 0;
+}
+
+.hud-lives.hit {
+  animation: lives-shake 0.5s;
+}
+
+.life {
+  width: 28px;
+  height: 28px;
+  transition:
+    filter 0.25s,
+    opacity 0.25s,
+    scale 0.25s;
+}
+
+.life .rind {
+  fill: #ff8a1f;
+  stroke: var(--outline, #2a1440);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.life .rib {
+  fill: none;
+  stroke: #c25a00;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.life .stem {
+  fill: none;
+  stroke: #5fae3f;
+  stroke-width: 3.4;
+  stroke-linecap: round;
+}
+
+.life .face {
+  fill: #2a1440;
+}
+
+.life.lost {
+  opacity: 0.35;
+  filter: grayscale(1);
+  scale: 0.8;
+}
+
+.hud-hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgb(214 40 40 / 0.65) 100%);
+}
+
+.hud-hurt.on {
+  animation: hurt-flash 0.7s ease-out;
+}
+
+.hud-dead {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px 24px 24px;
+  border-radius: 40px;
+  background: #5a1d2d;
+  border: 6px solid #fff;
+  box-shadow: 0 10px 0 var(--outline, #2a1440);
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.hud-dead.on {
+  visibility: visible;
+  animation: dead-in 0.7s both;
+}
+
+.dead-title {
+  font-size: clamp(32px, 9vw, 48px);
+  font-weight: 900;
+  text-transform: uppercase;
+  line-height: 1.1;
+  color: #ff6b6b;
+  -webkit-text-stroke: 10px var(--outline, #2a1440);
+}
+
+.dead-sub {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  -webkit-text-stroke: 4px var(--outline, #2a1440);
+}
+
+@keyframes lives-shake {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  15% {
+    translate: -7px 2px;
+    rotate: -4deg;
+  }
+  35% {
+    translate: 6px -2px;
+    rotate: 3deg;
+  }
+  55% {
+    translate: -4px 1px;
+    rotate: -2deg;
+  }
+  75% {
+    translate: 3px 0;
+    rotate: 1deg;
+  }
+}
+
+@keyframes hurt-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes dead-in {
+  0% {
+    opacity: 0;
+    scale: 0.3;
+    translate: -50% -20%;
+  }
+  60% {
+    opacity: 1;
+    scale: 1.08;
+    translate: -50% -50%;
+  }
+  100% {
+    opacity: 1;
+    scale: 1;
+    translate: -50% -50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-lives.hit,
+  .hud-hurt.on {
+    animation: none;
+  }
+  .hud-dead.on {
+    animation: none;
+    opacity: 1;
+  }
+}

@@ -1,14 +1,15 @@
 import * as THREE from "three";
 import { sampleChannel, type Sample } from "../../sim/channel.ts";
+import { isIsland, islandRadius } from "../../sim/island.ts";
 import type { Box, Channel, LevelData, Pose, SimEvent } from "../../sim/types.ts";
 import { applyPose, poseMatrix } from "./coords.ts";
 import { createGates } from "./gates.ts";
 import type { Kit } from "./kit.ts";
 import { createWind, type SwayOptions } from "./wind.ts";
 
-// Fart Together's look: the channel is cut into peach clay plateaus that float in a pale sky,
-// with coral cliffs dropping into the haze, a lime bumper rail on every bank and magenta spike
-// strips on the dangerous ones. All of it is generated from the channel centerline.
+// Halloween take on Fart Together's look: the channel is cut into dusky violet plateaus that float
+// in a night sky, with cliffs dropping into the purple haze, a pumpkin-orange bumper rail on every
+// bank and spike strips on the dangerous ones. The water is eerie slime green. All of it is generated from the channel centerline.
 
 const BANK_TOP = 0.9;
 const CLIFF_BOTTOM = -70;
@@ -16,17 +17,18 @@ const RAIL_RADIUS = 0.34;
 const WATER_MARGIN = 0.6;
 
 const COLORS = {
-  edge: new THREE.Color(0xf29a52),
-  top: new THREE.Color(0xf9c18b),
-  topFar: new THREE.Color(0xfacb98),
-  bankFace: new THREE.Color(0xf0883f),
-  cliffLip: new THREE.Color(0xe8705f),
-  cliff: new THREE.Color(0xf28d78),
-  cliffDeep: new THREE.Color(0xf7c2b4),
-  waterEdge: new THREE.Color(0x2a9fe2),
-  waterMid: new THREE.Color(0x4cc4f6),
-  rail: 0x9ad64b,
-  teal: 0x6fdcc8,
+  edge: new THREE.Color(0x4a3a62),
+  top: new THREE.Color(0x56456f),
+  topFar: new THREE.Color(0x5e4c7a),
+  bankFace: new THREE.Color(0x4a3866),
+  cliffLip: new THREE.Color(0x3c2c55),
+  cliff: new THREE.Color(0x4b3868),
+  cliffDeep: new THREE.Color(0x5a3f7a),
+  waterEdge: new THREE.Color(0x1d7a55),
+  waterMid: new THREE.Color(0x45c486),
+  island: new THREE.Color(0x7a6899),
+  rail: 0xff8a1f,
+  teal: 0x8be24a,
 };
 
 function mulberry32(seed: number): () => number {
@@ -265,10 +267,16 @@ function cliffSide() {
 }
 
 /** A chunky octagonal clay prism: peach top, coral sides. */
-function mesa(r: number, topY: number, bottomY: number, sides = 8): THREE.Mesh {
+function mesa(
+  r: number,
+  topY: number,
+  bottomY: number,
+  sides = 8,
+  top: THREE.Color = COLORS.top,
+): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.04, topY - bottomY, sides, 1), [
     new THREE.MeshLambertMaterial({ color: COLORS.cliff, flatShading: true }),
-    new THREE.MeshLambertMaterial({ color: COLORS.top }),
+    new THREE.MeshLambertMaterial({ color: top }),
     new THREE.MeshLambertMaterial({ color: COLORS.cliff }),
   ]);
   mesh.position.y = (topY + bottomY) / 2;
@@ -302,11 +310,38 @@ function scatterMesas(samples: readonly Sample[], hw: number, rand: () => number
   return group;
 }
 
+/** Gravestones, jack-o'-lanterns and a dead tree or two on every island big enough, from a seeded roll. */
+function islandDecor(walls: readonly Box[], kit: Kit, rand: () => number): THREE.Group {
+  const group = new THREE.Group();
+  const decor: Record<string, THREE.Matrix4[]> = { fern: [], bush: [], tree_round: [] };
+  for (const wall of walls.filter(isIsland)) {
+    const r = islandRadius(wall);
+    const count = Math.max(2, Math.round(r * 0.8));
+    for (let i = 0; i < count; i++) {
+      const a = rand() * Math.PI * 2;
+      const d = (0.25 + rand() * 0.55) * r;
+      const roll = rand();
+      const kind = roll < 0.55 ? "fern" : roll < 0.85 || r < 3 ? "bush" : "tree_round";
+      const scale = kind === "tree_round" ? 0.55 + rand() * 0.2 : 0.9 + rand() * 0.4;
+      decor[kind]!.push(
+        poseMatrix(
+          { x: wall.x + Math.cos(a) * d, y: wall.y + Math.sin(a) * d, rot: rand() * Math.PI * 2 },
+          BANK_TOP,
+          [scale, scale, scale],
+        ),
+      );
+    }
+  }
+  for (const [name, list] of Object.entries(decor))
+    if (list.length) group.add(kit.instance(name, list));
+  return group;
+}
+
 /** Islands and plain walls from `level.walls`: thick boxes become octagonal islands with a teal rim. */
 function buildWalls(walls: readonly Box[]): THREE.Group {
   const group = new THREE.Group();
   for (const wall of walls) {
-    if (Math.min(wall.hx, wall.hy) < 1) {
+    if (!isIsland(wall)) {
       const slab = new THREE.Mesh(
         new THREE.BoxGeometry(wall.hx * 2, BANK_TOP + 0.4, wall.hy * 2),
         new THREE.MeshLambertMaterial({ color: COLORS.top }),
@@ -315,8 +350,8 @@ function buildWalls(walls: readonly Box[]): THREE.Group {
       group.add(slab);
       continue;
     }
-    const r = Math.max(wall.hx, wall.hy) * 1.08;
-    const island = mesa(r, BANK_TOP, -1.5);
+    const r = islandRadius(wall);
+    const island = mesa(r, BANK_TOP, -1.5, 8, COLORS.island);
     const rim = new THREE.Mesh(
       new THREE.TorusGeometry(r * 1.02, 0.28, 6, 8),
       new THREE.MeshLambertMaterial({ color: COLORS.teal }),
@@ -353,7 +388,7 @@ export function buildTerrain(level: LevelData, kit: Kit, water: THREE.Material):
   const wind = createWind();
   const rand = mulberry32(hashString(level.name));
 
-  root.add(buildWalls(level.walls));
+  root.add(buildWalls(level.walls), islandDecor(level.walls, kit, rand));
   if (level.channel) {
     const channel = buildChannel(level.channel, kit, water, rand);
     root.add(channel.group, scatterMesas(channel.samples, level.channel.halfWidth, rand));

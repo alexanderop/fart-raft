@@ -16,10 +16,21 @@ export type RaftMotion = {
   readonly vel: { x: number; y: number };
 };
 
+/** A hit's wobble: how hard it tips the raft, and the spring that rocks it back (underdamped on purpose). */
+const HIT_TILT = 5;
+const HIT_STIFFNESS = 55;
+const HIT_DAMPING = 3;
+/** Blink cycle in sim ticks: the raft is hidden for the first BLINK_OFF of every BLINK_TICKS. */
+const BLINK_TICKS = 10;
+const BLINK_OFF = 4;
+
 export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
   raft.rotation.order = "YXZ";
   const roll = spring();
   const pitch = spring();
+  // A hit rocks the raft hard: loosely damped springs, so it wallows for a second.
+  const hitRoll = spring();
+  const hitPitch = spring();
   const squash = spring();
   const heaveBump = spring();
   const vel = { x: 0, y: 0 };
@@ -31,6 +42,7 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
   let yawRate = 0;
   let thrust = 0;
   let lastTick = 0;
+  let lastRot = 0;
 
   return {
     get thrust() {
@@ -39,6 +51,17 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
     vel,
     onEvent(e, now) {
       if (e.type === "fart") lastFart[e.seat] = now;
+      if (e.type === "lifeLost") {
+        // The hit throws the raft along (dirX, dirY): in its own frame, +x forward, +y left.
+        const c = Math.cos(lastRot);
+        const s = Math.sin(lastRot);
+        const ahead = e.dirX * c + e.dirY * s;
+        const aside = -e.dirX * s + e.dirY * c;
+        hitPitch.v += -ahead * HIT_TILT;
+        hitRoll.v += -aside * HIT_TILT;
+        squash.v += 12;
+        heaveBump.v += 3.5;
+      }
       if (e.type === "bump") {
         const p = clamp(e.speed / 6, 0.3, 1.5);
         squash.v += 7 * p;
@@ -50,8 +73,10 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
     update(dt, now, prev, curr, pose) {
       if (curr.tick < lastTick) {
         vel.x = vel.y = lateral = forward = accelFwd = accelLat = yawRate = 0;
+        for (const sp of [hitRoll, hitPitch]) sp.x = sp.v = 0;
       }
       lastTick = curr.tick;
+      lastRot = pose.rot;
 
       // Velocity and yaw rate from the last two sim ticks.
       const vx = (curr.raft.x - prev.raft.x) / STEP;
@@ -83,6 +108,8 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
       const pitchTarget = clamp(thrust * 0.12 + accelFwd * 0.006, -0.12, 0.2);
       stepSpring(roll, rollTarget, 40, 7, dt);
       stepSpring(pitch, pitchTarget, 40, 7, dt);
+      stepSpring(hitRoll, 0, HIT_STIFFNESS, HIT_DAMPING, dt);
+      stepSpring(hitPitch, 0, HIT_STIFFNESS, HIT_DAMPING, dt);
       stepSpring(squash, 0, 220, 9, dt);
       stepSpring(heaveBump, 0, 160, 8, dt);
 
@@ -93,8 +120,10 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
       const bobPitch = Math.sin(t0 * 1.1 + 2) * 0.025 + Math.sin(t0 * 2.1 + 0.7) * 0.01;
 
       raft.position.y += heave + 0.04;
-      raft.rotation.x = roll.x + bobRoll;
-      raft.rotation.z = pitch.x + bobPitch;
+      raft.rotation.x = roll.x + bobRoll + hitRoll.x;
+      raft.rotation.z = pitch.x + bobPitch + hitPitch.x;
+      // The raft blinks while the crew is safe after a hit.
+      raft.visible = curr.invulnerable <= 0 || curr.invulnerable % BLINK_TICKS >= BLINK_OFF;
       const sq = squash.x * 0.035;
       raft.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
     },

@@ -7,6 +7,8 @@ import {
   FART_TICKS,
   GAS_MAX,
   GAS_REGEN,
+  KNOCK_SPEED,
+  KNOCK_SPIN,
   LINEAR_DAMPING,
   RAFT_HULL,
   RAFT_MASS,
@@ -134,4 +136,18 @@ export function applyInputs(
     // The gas leaves opposite to the push.
     events.push({ type: "fart", seat: i, x, y, dirX: -dirX, dirY: -dirY });
   });
+}
+
+/**
+ * A hit throws the raft off balance: an impulse along `away` (unit vector, hazard → raft) plus
+ * a spin. The spin goes the way the raft was sliding past the hazard, like friction at the
+ * contact would turn it. `strength` scales both, 1 being a plain bar.
+ */
+export function knockBack(raft: Raft, away: Vec2, strength: number): void {
+  const { body } = raft;
+  const v = body.linvel();
+  const turn = Math.sign(away.x * v.y - away.y * v.x) || 1;
+  const push = KNOCK_SPEED * strength * body.mass();
+  body.applyImpulse({ x: away.x * push, y: away.y * push }, true);
+  body.applyTorqueImpulse(turn * KNOCK_SPIN * strength * body.effectiveAngularInertia(), true);
 }

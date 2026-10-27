@@ -23,6 +23,7 @@ const Phase = Schema.Union([
   Schema.Struct({ kind: Schema.tag("countdown"), ticksLeft: Num }),
   Schema.Struct({ kind: Schema.tag("racing"), startTick: Num, nextCheckpoint: Num }),
   Schema.Struct({ kind: Schema.tag("finished"), timeMs: Num }),
+  Schema.Struct({ kind: Schema.tag("dead"), timeMs: Num, nextCheckpoint: Num }),
 ]);
 
 export const Snapshot = Schema.Struct({
@@ -30,6 +31,8 @@ export const Snapshot = Schema.Struct({
   raft: Pose,
   riders: Schema.mutable(Schema.Array(RiderPose)),
   gas: Schema.mutable(Schema.Array(Num)),
+  lives: Num,
+  invulnerable: Num,
   hazards: Schema.mutable(
     Schema.Array(Schema.Struct({ id: Schema.String, x: Num, y: Num, rot: Num })),
   ),
@@ -49,6 +52,15 @@ export const SimEvent = Schema.Union([
   Schema.Struct({ type: Schema.tag("go") }),
   Schema.Struct({ type: Schema.tag("checkpoint"), index: Num }),
   Schema.Struct({ type: Schema.tag("finished"), timeMs: Num }),
+  Schema.Struct({
+    type: Schema.tag("lifeLost"),
+    lives: Num,
+    x: Num,
+    y: Num,
+    dirX: Num,
+    dirY: Num,
+  }),
+  Schema.Struct({ type: Schema.tag("died"), timeMs: Num }),
 ]);
 
 /** Who sits in a seat right now. A client knows which seat is its own from Welcome. */

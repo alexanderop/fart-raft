@@ -1,9 +1,9 @@
 @import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap");
 
 :root {
-  --hud-bg: #2a8fd6;
+  --hud-bg: #e8701a;
   --hud-fg: #fff;
-  --outline: #1d3a57;
+  --outline: #2a1440;
   --gas: #8ed14a;
 }
 
@@ -16,7 +16,7 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #9fd8ef;
+  background: #2b1a4d;
   font-family:
     "Fredoka", "Baloo 2", ui-rounded, "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif;
 }
@@ -465,7 +465,7 @@ canvas {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: linear-gradient(180deg, #8fd3f4 0%, #b8e6f7 55%, #ffd9b0 100%);
+  background: linear-gradient(180deg, #0d0820 0%, #2b1a4d 55%, #e8701a 100%);
   z-index: 10;
 }
 

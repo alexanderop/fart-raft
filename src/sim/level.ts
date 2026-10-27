@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier2d-compat";
 import { channelWalls } from "./channel.ts";
+import { isIsland, islandOutline } from "./island.ts";
 import type { Box, Channel, HazardDef, LevelData, Pose, Span, Vec2 } from "./types.ts";
 
 const BANK_RESTITUTION = 0.3;
@@ -9,24 +10,46 @@ function boxCollider(b: Box): RAPIER.ColliderDesc {
   return RAPIER.ColliderDesc.cuboid(b.hx, b.hy).setTranslation(b.x, b.y).setRotation(b.rot);
 }
 
-/** Build static geometry from LevelData. Returns collider handle → checkpoint index. */
-export function buildLevel(world: RAPIER.World, level: LevelData): Map<number, number> {
+/** An island is an octagon, the same one the renderer draws. */
+function wallCollider(b: Box): RAPIER.ColliderDesc {
+  if (!isIsland(b)) return boxCollider(b);
+  const corners = new Float32Array(islandOutline(b).flatMap((p) => [p.x, p.y]));
+  return RAPIER.ColliderDesc.convexHull(corners) ?? boxCollider(b);
+}
+
+export type BuiltLevel = {
+  /** Collider handle → checkpoint index. */
+  checkpointByHandle: Map<number, number>;
+  /** Handles of the spiked bank colliders: touching one costs the crew a life. */
+  spikeHandles: Set<number>;
+};
+
+/** Build static geometry from LevelData. */
+export function buildLevel(world: RAPIER.World, level: LevelData): BuiltLevel {
   for (const wall of level.walls)
-    world.createCollider(boxCollider(wall).setRestitution(BANK_RESTITUTION));
-  for (const wall of level.channel ? channelWalls(level.channel) : [])
-    world.createCollider(
+    world.createCollider(wallCollider(wall).setRestitution(BANK_RESTITUTION));
+  const spikeHandles = new Set<number>();
+  for (const wall of level.channel ? channelWalls(level.channel) : []) {
+    const collider = world.createCollider(
       boxCollider(wall).setRestitution(wall.spiky ? SPIKE_RESTITUTION : BANK_RESTITUTION),
     );
+    if (wall.spiky) spikeHandles.add(collider.handle);
+  }
 
   const checkpointByHandle = new Map<number, number>();
   level.checkpoints.forEach((cp, i) => {
     const collider = world.createCollider(boxCollider(cp).setSensor(true));
     checkpointByHandle.set(collider.handle, i);
   });
-  return checkpointByHandle;
+  return { checkpointByHandle, spikeHandles };
 }
 
-const HAZARD_KINDS: readonly string[] = ["spinner", "sweeper"] satisfies HazardDef["kind"][];
+const HAZARD_KINDS: readonly string[] = [
+  "spinner",
+  "sweeper",
+  "log",
+  "bumper",
+] satisfies HazardDef["kind"][];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const hasNums = (v: Record<string, unknown>, keys: readonly string[]) =>
@@ -37,9 +60,13 @@ const BOX_KEYS = [...POSE_KEYS, "hx", "hy"];
 
 const isPose = (v: unknown): v is Pose => isObject(v) && hasNums(v, POSE_KEYS);
 const isBox = (v: unknown): v is Box => isObject(v) && hasNums(v, BOX_KEYS);
+const isOptionalNum = (v: unknown) =>
+  v === undefined || (typeof v === "number" && Number.isFinite(v));
 const isHazard = (v: unknown): v is HazardDef =>
   isObject(v) &&
   hasNums(v, [...BOX_KEYS, "speed"]) &&
+  isOptionalNum(v.range) &&
+  isOptionalNum(v.phase) &&
   typeof v.id === "string" &&
   typeof v.kind === "string" &&
   HAZARD_KINDS.includes(v.kind);

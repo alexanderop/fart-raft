@@ -20,12 +20,17 @@ export type SimEvent =
   | { type: "bump"; x: number; y: number; speed: number }
   | { type: "go" }
   | { type: "checkpoint"; index: number }
-  | { type: "finished"; timeMs: number };
+  | { type: "finished"; timeMs: number }
+  /** A hazard or a spike hit: `lives` is what is left. (dirX, dirY) is the unit direction the hit throws the raft. */
+  | { type: "lifeLost"; lives: number; x: number; y: number; dirX: number; dirY: number }
+  /** The last life went: the race is over. */
+  | { type: "died"; timeMs: number };
 
 export type Phase =
   | { kind: "countdown"; ticksLeft: number }
   | { kind: "racing"; startTick: number; nextCheckpoint: number }
-  | { kind: "finished"; timeMs: number };
+  | { kind: "finished"; timeMs: number }
+  | { kind: "dead"; timeMs: number; nextCheckpoint: number };
 
 export type Pose = { x: number; y: number; rot: number };
 
@@ -37,6 +42,10 @@ export type Snapshot = {
   raft: Pose;
   riders: RiderPose[];
   gas: number[];
+  /** Lives the crew has left. */
+  lives: number;
+  /** Ticks of grace left after the last hit: the raft cannot be hurt while this is above 0. */
+  invulnerable: number;
   hazards: (Pose & { id: string })[];
   phase: Phase;
 };
@@ -51,8 +60,19 @@ export type Vec2 = { x: number; y: number };
  * Spinner: a bar rotating about its center at `speed` rad/s.
  * Sweeper: a bar pivoting at (x, y), arm of length 2·hx along `rot`, swinging ±SWEEP_AMPLITUDE
  * with angular frequency `speed`.
+ * Log: a spiked log of half-length `hx` and radius `hy`, its axis along `rot`, rolling back and
+ * forth across that axis: its center runs `range` m either side of (x, y), `speed` rad/s, `phase` rad.
+ * Bumper: a round spiked pumpkin of radius `hx` at (x, y) that swells and shrinks at `speed` rad/s.
  */
-export type HazardDef = { id: string; kind: "spinner" | "sweeper"; speed: number } & Box;
+export type HazardDef = {
+  id: string;
+  kind: "spinner" | "sweeper" | "log" | "bumper";
+  speed: number;
+  /** Log only: how far its center travels either side of (x, y), m. */
+  range?: number;
+  /** Log and bumper: where in its cycle the hazard starts, radians. */
+  phase?: number;
+} & Box;
 
 /** A stretch of spiked bank, by arc length (m) along the channel's centerline. */
 export type Span = { side: "left" | "right"; from: number; to: number };

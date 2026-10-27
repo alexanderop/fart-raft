@@ -7,12 +7,17 @@ export function createSpinner(world: RAPIER.World, def: HazardDef): Hazard {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.y).setRotation(def.rot),
   );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(def.hx, def.hy).setRestitution(0.6), body);
+  const collider = world.createCollider(
+    RAPIER.ColliderDesc.cuboid(def.hx, def.hy).setRestitution(0.6),
+    body,
+  );
   let angle = def.rot;
 
   return {
     id: def.id,
     body,
+    colliderHandle: collider.handle,
+    knock: 1,
     update(dt) {
       angle += def.speed * dt;
       body.setNextKinematicRotation(angle);

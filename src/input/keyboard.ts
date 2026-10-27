@@ -1,5 +1,5 @@
 import type { SeatInput } from "../sim/types.ts";
-import type { InputSource } from "./sources.ts";
+import { cameraRelative, type InputSource } from "./sources.ts";
 
 /** Each action fires on any of its keys. */
 export type KeyBinding = {
@@ -72,11 +72,8 @@ export function keyboardSource(keys: KeyBinding, heading: () => number): InputSo
       const fwd = (anyHeld(keys.up) ? 1 : 0) - (anyHeld(keys.down) ? 1 : 0);
       const left = (anyHeld(keys.left) ? 1 : 0) - (anyHeld(keys.right) ? 1 : 0);
       const len = Math.hypot(fwd, left) || 1;
-      const h = heading();
-      const c = Math.cos(h);
-      const s = Math.sin(h);
-      // Forward is (c, s), left is (-s, c).
-      const move = { x: (fwd * c - left * s) / len, y: (fwd * s + left * c) / len };
+      const world = cameraRelative(fwd, left, heading());
+      const move = { x: world.x / len, y: world.y / len };
       return { move, fart: anyHeld(keys.fart) };
     },
   };

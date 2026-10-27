@@ -1,6 +1,23 @@
 import { botSource } from "../input/bot.ts";
+import {
+  BTN,
+  buttonDown,
+  gamepads,
+  gamepadSource,
+  isFarting,
+  type Gamepads,
+} from "../input/gamepad.ts";
 import { keyboardSource, PLAYER_KEYS, WASD_OR_ARROWS } from "../input/keyboard.ts";
-import { createSeats, readSeats, type InputSource } from "../input/sources.ts";
+import {
+  createSeats,
+  EMPTY_PLAN,
+  mergeSources,
+  planSeats,
+  readSeats,
+  type InputSource,
+  type SeatKind,
+  type SeatPlan,
+} from "../input/sources.ts";
 import { connect } from "../net/client.ts";
 import { FRAME_TICKS } from "../net/protocol.ts";
 import { crewZones, STEP, type Zone } from "../sim/constants.ts";
@@ -29,24 +46,98 @@ export type Session = {
 type Heading = () => number;
 
 /**
- * Fill seats from the menu choice. Humans take the first seats, bots the rest. Each one is
- * just an InputSource.
+ * Who drives each seat in a local game. Humans take pads first (connection order), the rest
+ * play on keyboard clusters, bots fill what is left, and a pad that presses fart while idle
+ * can take over a bot seat mid-race (rule in `planSeats`). Each seat is just an InputSource.
  */
-function fillSeats(
+function createSeatDriver(
   cfg: GameConfig,
-  seats: readonly Zone[],
+  zones: readonly Zone[],
   observe: () => Snapshot,
   lvl: LevelData,
   heading: Heading,
-): InputSource[] {
-  const sources = createSeats(seats.length);
-  for (let i = 0; i < seats.length; i++) {
-    sources[i] =
-      i >= cfg.humans
-        ? botSource(i, seats, lvl, observe)
-        : keyboardSource(cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[i]!, heading);
+  pads: Gamepads,
+) {
+  const kinds: SeatKind[] = zones.map((_, i) => (i < cfg.humans ? "human" : "bot"));
+  const wantsIn = new Set<number>();
+  let plan: SeatPlan = EMPTY_PLAN;
+  let planKey = "";
+  let bots: (InputSource | undefined)[] = [];
+  let sources: InputSource[] = createSeats(zones.length);
+  let labels: string[] = [];
+
+  const seatOfPad = new Map<number, number>();
+  const bot = (i: number) => (bots[i] ??= botSource(i, zones, lvl, observe));
+
+  function rebuild() {
+    sources = zones.map((_, i) => {
+      const pad = [...plan.pads].find(([, seat]) => seat === i)?.[0];
+      if (pad !== undefined) return gamepadSource(pads, () => pad, heading);
+      const cluster = plan.keys.get(i);
+      if (cluster === undefined) return bot(i);
+      const keys = cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[cluster]!;
+      return keyboardSource(keys, heading);
+    });
+    labels = zones.map((_, i) => {
+      const onPad = [...plan.pads.values()].includes(i);
+      const cluster = plan.keys.get(i);
+      if (cfg.humans === 1 && i === 0) return onPad ? "You 🎮" : "You";
+      if (onPad) return `P${i + 1} · 🎮`;
+      return cluster === undefined ? "Bot" : `P${i + 1} · ${CONTROLS[cluster]}`;
+    });
   }
-  return sources;
+
+  return {
+    /** Once per tick, before reading seats: look at the pads and re-plan if they changed. */
+    update() {
+      pads.poll();
+      const connected = pads.connected();
+      for (const pad of wantsIn) if (!connected.includes(pad)) wantsIn.delete(pad);
+      for (const pad of connected) {
+        const state = pads.state(pad);
+        if (state && !plan.pads.has(pad) && isFarting(state)) wantsIn.add(pad);
+      }
+      const next = planSeats(kinds, connected, wantsIn, plan);
+      const key = JSON.stringify([[...next.pads], [...next.keys]]);
+      plan = next;
+      seatOfPad.clear();
+      for (const [pad, seat] of plan.pads) seatOfPad.set(pad, seat);
+      if (key !== planKey || sources.length === 0) {
+        planKey = key;
+        rebuild();
+      }
+    },
+    sources: () => sources,
+    labels: () => labels,
+    /** The pad on this seat, if any. */
+    padOf: (seat: number): number | undefined => {
+      for (const [pad, s] of seatOfPad) if (s === seat) return pad;
+      return undefined;
+    },
+    claimedPads: (): readonly number[] => [...seatOfPad.keys()],
+    /** New race: bots start over, pad and keyboard assignments stay. */
+    reset() {
+      bots = [];
+      rebuild();
+    },
+  };
+}
+
+/** Haptics for what just happened: a short buzz for your fart, a big one for a hit. */
+function rumbleFor(
+  pads: Gamepads,
+  events: readonly SimEvent[],
+  padOfSeat: (seat: number) => number | undefined,
+  allPads: () => readonly number[],
+): void {
+  for (const e of events) {
+    if (e.type === "fart") {
+      const pad = padOfSeat(e.seat);
+      if (pad !== undefined) pads.rumble(pad, "fart");
+    } else if (e.type === "lifeLost") {
+      for (const pad of allPads()) pads.rumble(pad, "hit");
+    }
+  }
 }
 
 /** `physics` is `initPhysics()`, started early so Rapier loads while the menu is up. */
@@ -58,34 +149,44 @@ export async function localSession(
 ): Promise<Session> {
   await physics;
   const crew = crewZones(crewSize(config));
-  const labels = crew.map((_, i) =>
-    i >= config.humans ? "Bot" : config.humans === 1 ? "You" : `P${i + 1} · ${CONTROLS[i]}`,
-  );
 
   let sim = createSim(level, crew);
   let prev = snapshot(sim);
   let curr = prev;
   let pending: SimEvent[] = [];
   // Bots read the latest snapshot, the same data a server broadcasts.
-  let seats = fillSeats(config, crew, () => curr, level, heading);
+  const driver = createSeatDriver(config, crew, () => curr, level, heading, gamepads);
+  driver.update();
+  let startWasDown = false;
+
+  function restart() {
+    sim.world.free();
+    sim = createSim(level, crew);
+    prev = curr = snapshot(sim);
+    driver.reset();
+  }
 
   return {
     crew,
-    seatLabels: () => labels,
+    seatLabels: driver.labels,
     tick() {
+      driver.update();
+      // Start on any seated pad restarts, like R.
+      const startDown = driver.claimedPads().some((i) => {
+        const state = gamepads.state(i);
+        return state !== undefined && buttonDown(state, BTN.start);
+      });
+      if (startDown && !startWasDown) restart();
+      startWasDown = startDown;
       prev = curr;
-      pending.push(...step(sim, readSeats(seats)));
+      pending.push(...step(sim, readSeats(driver.sources())));
       curr = snapshot(sim);
     },
-    restart() {
-      sim.world.free();
-      sim = createSim(level, crew);
-      prev = curr = snapshot(sim);
-      seats = fillSeats(config, crew, () => curr, level, heading);
-    },
+    restart,
     frame(alpha) {
       const events = pending;
       pending = [];
+      rumbleFor(gamepads, events, driver.padOf, driver.claimedPads);
       return { prev, curr, alpha, events };
     },
   };
@@ -113,7 +214,11 @@ export async function onlineSession(
 ): Promise<Session> {
   const conn = await connect(url);
   conn.onClose(onLost);
-  const keys = keyboardSource(WASD_OR_ARROWS, heading);
+  // Online there is one seat: keyboard and the first pad both drive it.
+  const source = mergeSources(
+    keyboardSource(WASD_OR_ARROWS, heading),
+    gamepadSource(gamepads, () => gamepads.connected()[0], heading),
+  );
 
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
@@ -143,16 +248,22 @@ export async function onlineSession(
   return {
     crew: crewZones(conn.crew),
     seatLabels: () => received.labels,
-    tick: () => conn.send(keys.read()),
+    tick() {
+      gamepads.poll();
+      conn.send(source.read());
+    },
     restart: () => conn.restart(),
     frame() {
       const alpha = Math.min(1, Math.max(0, (performance.now() - received.at) / FRAME_MS));
-      return {
-        prev: received.prev,
-        curr: received.curr,
-        alpha,
-        events: received.events.splice(0),
-      };
+      const events = received.events.splice(0);
+      const pad = gamepads.connected()[0];
+      rumbleFor(
+        gamepads,
+        events,
+        (seat) => (seat === conn.seat ? pad : undefined),
+        () => (pad === undefined ? [] : [pad]),
+      );
+      return { prev: received.prev, curr: received.curr, alpha, events };
     },
   };
 }

@@ -1,3 +1,5 @@
+import { gamepads, menuIntent, type MenuIntent } from "../../input/gamepad.ts";
+import { planSeats, type SeatKind } from "../../input/sources.ts";
 import { MAX_CREW } from "../../sim/constants.ts";
 
 /** What the start menu decides. Humans take the first seats; bots fill the rest when enabled. */
@@ -78,7 +80,7 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="menu-title">
       <div class="menu-card">
-        <h1 id="menu-title" class="menu-title">Fart Raft</h1>
+        <h1 id="menu-title" class="menu-title">🎃 Fart Raft 🎃</h1>
         <p class="menu-sub">Steer the raft together. Every fart pushes it.</p>
         <div class="menu-label" id="players-label">Players</div>
         <div class="menu-players" role="radiogroup" aria-labelledby="players-label">
@@ -93,6 +95,7 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
           <input type="checkbox" data-bots />
           <span>Fill empty seats with bots</span>
         </label>
+        <p class="menu-hint menu-pads" data-pads aria-live="polite"></p>
         <ol class="menu-seats" data-seats></ol>
         <button type="button" class="menu-start" data-start>Start</button>
         <button type="button" class="menu-online" data-online>Play online</button>
@@ -106,6 +109,7 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
   const seats = root.querySelector<HTMLElement>("[data-seats]")!;
   const start = root.querySelector<HTMLButtonElement>("[data-start]")!;
   const online = root.querySelector<HTMLButtonElement>("[data-online]")!;
+  const padLine = root.querySelector<HTMLElement>("[data-pads]")!;
 
   const render = () => {
     for (const b of playerButtons) {
@@ -116,9 +120,21 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
     bots.checked = config.bots;
     bots.disabled = config.humans === 0 || config.humans === MAX_CREW;
     const size = crewSize(config);
+    const connected = gamepads.connected();
+    padLine.textContent =
+      connected.length === 0
+        ? "🎮 No controller · press a button on one to connect"
+        : `🎮 ${connected.length} ${connected.length === 1 ? "controller" : "controllers"} connected · D-pad ◀ ▶ players · A start · Y bots`;
+    // Same rule as the race: pads take the first human seats, keyboards the rest.
+    const kinds: SeatKind[] = Array.from({ length: size }, (_, i) =>
+      i < config.humans ? "human" : "bot",
+    );
+    const plan = planSeats(kinds, connected, new Set());
+    const padSeats = new Set(plan.pads.values());
     seats.innerHTML = Array.from({ length: size }, (_, i) => {
       if (i >= config.humans) return `<li class="bot">Bot</li>`;
-      const keys = config.humans === 1 ? "WASD / Arrows · Space" : CONTROLS[i];
+      if (padSeats.has(i)) return `<li><b>P${i + 1}</b> 🎮 Controller</li>`;
+      const keys = config.humans === 1 ? "WASD / Arrows · Space" : CONTROLS[plan.keys.get(i) ?? i];
       return `<li><b>P${i + 1}</b> ${keys}</li>`;
     }).join("");
   };
@@ -137,7 +153,9 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
   start.focus();
 
   return new Promise((resolve) => {
+    let padFrame = 0;
     const launch = (choice: Launch) => {
+      cancelAnimationFrame(padFrame);
       removeEventListener("keydown", onKey);
       root.remove();
       resolve(choice);
@@ -156,6 +174,43 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
       const n = Number.parseInt(e.key, 10);
       if (n >= 0 && n <= MAX_CREW) pick(n);
     };
+    const act = (intent: MenuIntent) => {
+      if (intent === "left" || intent === "right") {
+        pick(Math.max(0, Math.min(MAX_CREW, config.humans + (intent === "left" ? -1 : 1))));
+      } else if (intent === "up" || intent === "down") {
+        (document.activeElement === online ? start : online).focus();
+      } else if (intent === "toggle") {
+        if (!bots.disabled) {
+          config = normalize({ ...config, bots: !config.bots });
+          render();
+        }
+      } else if (document.activeElement === online) {
+        online.click();
+      } else {
+        start.click();
+      }
+    };
+    // Pads are polled, not evented: act when a pad's intent changes. A pad that just
+    // appeared is usually still holding the button that woke it, so swallow that first state.
+    let lastIntent: MenuIntent | undefined;
+    let lastCount = -1;
+    const pollPads = () => {
+      gamepads.poll();
+      const connected = gamepads.connected();
+      const intent = connected
+        .map((i) => gamepads.state(i))
+        .map((state) => state && menuIntent(state))
+        .find((x) => x !== undefined);
+      if (connected.length !== lastCount) {
+        lastCount = connected.length;
+        render();
+      } else if (intent !== undefined && intent !== lastIntent) {
+        act(intent);
+      }
+      lastIntent = intent;
+      padFrame = requestAnimationFrame(pollPads);
+    };
+    padFrame = requestAnimationFrame(pollPads);
     start.addEventListener("click", go);
     online.addEventListener("click", () => launch({ kind: "online", url: defaultServerUrl() }));
     addEventListener("keydown", onKey);

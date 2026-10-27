@@ -8,7 +8,7 @@ export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.y).setRotation(def.rot),
   );
-  world.createCollider(
+  const collider = world.createCollider(
     RAPIER.ColliderDesc.cuboid(def.hx, def.hy).setTranslation(def.hx, 0).setRestitution(0.8),
     body,
   );
@@ -17,6 +17,8 @@ export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
   return {
     id: def.id,
     body,
+    colliderHandle: collider.handle,
+    knock: 1,
     update(dt) {
       t += dt;
       body.setNextKinematicRotation(def.rot + SWEEP_AMPLITUDE * Math.sin(t * def.speed));

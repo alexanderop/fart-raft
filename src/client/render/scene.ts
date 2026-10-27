@@ -1,10 +1,11 @@
 import * as THREE from "three";
-import type { Zone } from "../../sim/constants.ts";
+import { STEP, type Zone } from "../../sim/constants.ts";
 import type { LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
 import { applyPose, lerpPose } from "./coords.ts";
 import { createSky, createWater, HAZE } from "./env.ts";
 import { loadKit } from "./kit.ts";
 import { createChaseCamera } from "./chaseCamera.ts";
+import { createHazardView, type HazardView } from "./hazards.ts";
 import { createRaftMotion } from "./raftMotion.ts";
 import { createRiderAnimator } from "./riders.ts";
 import { buildTerrain } from "./terrain.ts";
@@ -41,9 +42,9 @@ export async function createScene(
   scene.fog = new THREE.Fog(HAZE, 45, 170);
   const sky = createSky();
   scene.add(sky);
-  scene.add(new THREE.HemisphereLight(0xf2f8ff, 0xf3c3a4, 2.2));
+  scene.add(new THREE.HemisphereLight(0xa996e0, 0x3a2030, 1.6));
 
-  const sun = new THREE.DirectionalLight(0xfff6e8, 1.3);
+  const sun = new THREE.DirectionalLight(0xd6dcff, 1.5);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const cam = sun.shadow.camera;
@@ -60,13 +61,11 @@ export async function createScene(
   const terrain = buildTerrain(level, kit, water.material);
   scene.add(terrain.group);
 
-  const hazardMeshes = new Map(
+  const hazards = new Map<string, HazardView>(
     level.hazards.map((h) => {
-      const mesh = kit.clone(h.kind);
-      if (h.kind === "spinner") mesh.scale.set(h.hx, h.hy, h.hy);
-      else mesh.scale.set(h.hx, 1, 1);
-      scene.add(mesh);
-      return [h.id, mesh] as const;
+      const view = createHazardView(kit, h);
+      scene.add(view.root);
+      return [h.id, view] as const;
     }),
   );
 
@@ -107,14 +106,9 @@ export async function createScene(
       motion.update(dt, now, prev, curr, pose);
       riders.update(dt, now, prev, curr, alpha, pose);
       curr.hazards.forEach((h, i) => {
-        const def = level.hazards.find((d) => d.id === h.id);
-        const mesh = hazardMeshes.get(h.id);
-        if (mesh && def)
-          applyPose(
-            mesh,
-            lerpPose(prev.hazards[i] ?? h, h, alpha),
-            def.kind === "spinner" ? def.hy : 0,
-          );
+        hazards
+          .get(h.id)
+          ?.update(lerpPose(prev.hazards[i] ?? h, h, alpha), (prev.tick + alpha) * STEP);
       });
       chase.update(camera, dt, pose, curr, motion.vel, motion.thrust, shake);
       // Tight shadow frustum that follows the raft.

@@ -57,6 +57,14 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
     m.rotation.z = Math.PI / 2;
     return group(m);
   },
+  // Half-length 2.4 along x, radius 1: scaled (hx / 2.4, hy, hy).
+  log: () => {
+    const m = mesh(new THREE.CylinderGeometry(0.8, 0.8, 4.8, 14), 0x3b2736, 0.8);
+    m.rotation.z = Math.PI / 2;
+    return group(m);
+  },
+  // Radius 1, scaled uniformly by the bumper's radius.
+  bumper: () => group(mesh(new THREE.SphereGeometry(0.9, 14, 10), 0xf5821f, 0.9)),
   gate_post: () => group(mesh(new THREE.BoxGeometry(0.4, 8.5, 0.4), 0xedb040, 4.25)),
   gate_bar: () => group(mesh(new THREE.BoxGeometry(2, 0.4, 0.4), 0xedb040)),
   gate_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0xe0502b)),

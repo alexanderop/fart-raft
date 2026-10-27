@@ -47,6 +47,15 @@ def mat(name, hexcol, rough=0.75):
     return m
 
 
+def glow(name, hexcol, strength=4.0):
+    """Self-lit material (exports as glTF emissive), for jack-o'-lantern faces and candle flames."""
+    m = mat(name, hexcol, 0.4)
+    b = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    b.inputs["Emission Color"].default_value = (*srgb(hexcol), 1)
+    b.inputs["Emission Strength"].default_value = strength
+    return m
+
+
 def kit_collection():
     col = bpy.data.collections.get(KIT)
     if col:
@@ -179,47 +188,53 @@ def join(name, parts, parent=None, location=(0, 0, 0)):
     return o
 
 
-# ── palette (sampled from the Fart Together key art) ───────────────────────────
+# ── palette (Halloween: pumpkin orange, night purple, slime green, bone) ───────
 
 M = {}
 
 
 def palette():
     M.update(
-        ring=mat("ring_lime", 0xA9DE3C, 0.45),
-        ring_low=mat("ring_green", 0x6FBF3A, 0.45),
-        ring_stripe=mat("ring_trim", 0xF2582E, 0.5),
-        floor=mat("raft_floor", 0x7FD04A, 0.6),
-        floor_line=mat("raft_floor_line", 0x58A834, 0.7),
-        rope=mat("rope", 0xE23B3B, 0.7),
+        ring=mat("ring_pumpkin", 0xF57C1F, 0.45),
+        ring_low=mat("ring_pumpkin_dark", 0xC2500E, 0.45),
+        ring_stripe=mat("ring_trim", 0x2A1B33, 0.5),
+        floor=mat("raft_floor", 0x4B2E6B, 0.6),
+        floor_line=mat("raft_floor_line", 0x32204A, 0.7),
+        rope=mat("rope", 0x8BE24A, 0.7),
         white=mat("eye_white", 0xFFFFFF, 0.3),
         pupil=mat("pupil", 0x111111, 0.2),
         nostril=mat("nostril", 0x2A2030, 0.6),
         blush=mat("blush", 0xFF8FA3, 0.6),
         tooth=mat("tooth", 0xFFFBEA, 0.4),
-        leaf=mat("leaf", 0x3E9E2E, 0.8),
-        fern=mat("fern", 0xC9D93C, 0.7),
-        grass=mat("grass", 0x7FCB45, 0.8),
-        bark=mat("bark", 0x6B4A3A, 0.9),
-        leaf_hi=mat("leaf_light", 0x63BE3A, 0.8),
-        leaf_dk=mat("leaf_dark", 0x2D7A25, 0.8),
-        gold=mat("bamboo_gold", 0xEDB040, 0.45),
-        gold_node=mat("bamboo_gold_joint", 0xC4801F, 0.5),
-        gold_hi=mat("bamboo_gold_hi", 0xF8D070, 0.45),
-        ribbon=mat("ribbon_pink", 0xF0509A, 0.5),
-        gate_rope=mat("gate_rope", 0x9A6532, 0.9),
-        sign=mat("sign_board", 0xE0502B, 0.6),
-        sign_frame=mat("sign_frame", 0x8F2D24, 0.7),
-        sign_trim=mat("sign_trim", 0x3FC0B2, 0.5),
-        ink=mat("sign_ink", 0xFFD23F, 0.45),
-        check_dark=mat("checker_dark", 0x2A2230, 0.6),
-        check_light=mat("checker_light", 0xFFF3D9, 0.6),
-        magenta=mat("hazard_magenta", 0xD8329A, 0.45),
-        purple=mat("strip_purple", 0xB02FA8, 0.5),
-        spike=mat("spike_white", 0xFFFDF4, 0.35),
-        mint=mat("hazard_mint", 0x4CCFB6, 0.45),
-        hub=mat("hazard_hub", 0xFFF6EE, 0.45),
-        trunk=mat("trunk_brown", 0x7A4A38, 0.9),
+        grass=mat("grass", 0x8C7A4E, 0.8),
+        gold=mat("bone", 0xE9DFC4, 0.5),
+        gold_node=mat("bone_joint", 0xB9A887, 0.55),
+        gold_hi=mat("bone_hi", 0xFFF7E3, 0.45),
+        ribbon=mat("ribbon_orange", 0xFF8A1F, 0.5),
+        gate_rope=mat("gate_rope", 0x3B2A20, 0.9),
+        sign=mat("sign_board", 0x2A1B33, 0.6),
+        sign_frame=mat("sign_frame", 0x5A2D82, 0.7),
+        sign_trim=mat("sign_trim", 0x8BE24A, 0.5),
+        ink=glow("sign_ink", 0xFF8A1F, 1.5),
+        check_dark=mat("checker_dark", 0x1A1020, 0.6),
+        check_light=mat("checker_light", 0xFF8A1F, 0.6),
+        magenta=mat("hazard_purple", 0x7B2FB0, 0.45),
+        purple=mat("strip_black", 0x2A1B33, 0.5),
+        spike=mat("spike_bone", 0xF2EAD3, 0.35),
+        mint=mat("hazard_slime", 0x8BE24A, 0.45),
+        hub=mat("hazard_hub", 0xE9DFC4, 0.45),
+        trunk=mat("trunk_dead", 0x2E2433, 0.9),
+        pumpkin=mat("pumpkin", 0xF5821F, 0.55),
+        pumpkin_dk=mat("pumpkin_rib", 0xD9631A, 0.6),
+        stem=mat("pumpkin_stem", 0x5E7A2A, 0.8),
+        flame=glow("lantern_glow", 0xFFC53D, 5.0),
+        hat=mat("witch_hat", 0x231833, 0.6),
+        hat_band=mat("witch_hat_band", 0x8BE24A, 0.5),
+        stone=mat("gravestone", 0x8A8698, 0.9),
+        stone_dk=mat("gravestone_dark", 0x5E5A6E, 0.9),
+        moss=mat("moss", 0x5C7A3A, 0.9),
+        bark=mat("log_bark", 0x3B2736, 0.85),
+        bark_dk=mat("log_bark_dark", 0x2A1B33, 0.9),
     )
 
 
@@ -309,8 +324,23 @@ def capybara(body, belly):
     return parts
 
 
+HAT_Z = {"hippo": 1.3, "croc": 1.26, "capybara": 1.3}  # head top, rider space
+
+
+def witch_hat(z):
+    """Pointy hat tipped back a little, with a slime-green band. Joins the head group."""
+    brim = cyl((0.02, 0, z), 0.3, 0.03, M["hat"], 20)
+    band = cyl((0.02, 0, z + 0.06), 0.17, 0.08, M["hat_band"], 16)
+    cone = cyl((0.0, 0, z + 0.26), 0.165, 0.44, M["hat"], 16, r2=0.0)
+    tip = cyl((-0.08, 0, z + 0.55), 0.055, 0.2, M["hat"], 8, rot=(0, -0.7, 0), r2=0.0)
+    parts = [brim, band, cone, tip]
+    for p in parts:
+        p.location.x -= 0.08  # sit behind the eyes
+    return parts
+
+
 def build_raft():
-    """Round inflatable ring: lime tube on a green tube, red-orange trim band, planked green floor."""
+    """Round inflatable ring: pumpkin tube on a dark orange tube, black trim band, planked purple floor."""
     lower = torus((0, 0, 0.22), RING_R + 0.02, TUBE, M["ring_low"], seg=48)
     upper = torus((0, 0, RING_Z), RING_R, TUBE, M["ring"], seg=48)
     stripe = torus((0, 0, RING_Z + 0.02), RING_R, TUBE + 0.018, M["ring_stripe"], scale=(1, 1, 0.4), seg=48, mseg=12)
@@ -321,7 +351,7 @@ def build_raft():
         half = RING_R * math.sqrt(max(0.0, 1 - (y / RING_R) ** 2)) - 0.05
         if half > 0.2:
             parts.append(box((0, y, 0.395), (half * 2, 0.025, 0.012), M["floor_line"]))
-    for i in range(16):  # red rope handles on the lower ring
+    for i in range(16):  # slime-green rope handles on the lower ring
         a = i / 16 * math.tau + 0.2
         x, y = math.cos(a) * (RAFT_RADIUS + 0.02), math.sin(a) * (RAFT_RADIUS + 0.02)
         parts.append(torus((x, y, 0.22), 0.13, 0.035, M["rope"], rot=(math.pi / 2, 0, a + math.pi / 2), seg=12, mseg=5))
@@ -330,7 +360,7 @@ def build_raft():
     for i, ((sx, sy), (kind, body, belly)) in enumerate(zip(SEATS, ANIMALS)):
         mb = mat(f"rider_{i}", body, 0.55)
         ml = mat(f"rider_{i}_belly", belly, 0.6)
-        parts = builders[kind](mb, ml)
+        parts = builders[kind](mb, ml) + witch_hat(HAT_Z[kind])
         loc = Vector((sx, sy, RIDER_Z))  # the client moves riders around the deck
         for p in parts:
             p.location = loc + p.location * RIDER_SCALE
@@ -396,6 +426,53 @@ def build_spike_strip():
         parts.append(box((x, 0, 0.51), (0.15, 0.15, 0.05), M["spike"], rot=(0, 0, math.pi / 4)))
         parts.append(spike((x, 0.19, 0.2), (0, 1, 0), 0.1, 0.32, M["spike"]))
     return join("spike_strip", parts)
+
+
+LOG_HALF = 2.4  # half-length of the rolling log; the client scales (hx / LOG_HALF, hy, hy)
+
+
+def build_log():
+    """Rolling spiked log for the `log` hazard: lies along X (±LOG_HALF), radius 1 with the spike
+    tips, axis 0.6 above the water. Dark bark, bone rings on the end caps, slime-green bands, a
+    glowing pumpkin-orange seam and rows of bone spikes. The client rolls it about X as it travels."""
+    zc, r = 0.6, 0.78
+    along = (0, math.pi / 2, 0)  # turns a Z-axis primitive onto the X axis
+    parts = [cyl((0, 0, zc), r, LOG_HALF * 2 - 0.2, M["bark"], 18, rot=along)]
+    for sgn in (1, -1):
+        x = sgn * (LOG_HALF - 0.1)
+        parts.append(cyl((x, 0, zc), r + 0.02, 0.12, M["gold"], 18, rot=along))
+        parts.append(cyl((x + sgn * 0.01, 0, zc), r * 0.7, 0.14, M["gold_node"], 16, rot=along))
+        parts.append(cyl((x + sgn * 0.02, 0, zc), r * 0.42, 0.16, M["gold"], 14, rot=along))
+        parts.append(cyl((x + sgn * 0.03, 0, zc), r * 0.14, 0.18, M["bark_dk"], 8, rot=along))
+        parts.append(torus((sgn * 1.55, 0, zc), r + 0.02, 0.07, M["hat_band"], rot=along, seg=24, mseg=6))
+    parts.append(torus((0, 0, zc), r + 0.01, 0.06, M["flame"], rot=along, seg=24, mseg=6))
+    for row, x in enumerate((-1.9, -1.15, -0.5, 0.5, 1.15, 1.9)):  # rows of bone spikes, each turned half a step
+        for k in range(6):
+            a = (k + 0.5 * (row % 2)) / 6 * math.tau
+            d = (0, math.cos(a), math.sin(a))
+            base = (x, d[1] * (r - 0.04), zc + d[2] * (r - 0.04))
+            parts.append(spike(base, d, 0.15, 0.34, M["spike"], n=5))
+    return join("log", parts)
+
+
+def build_bumper():
+    """Floating pumpkin bumper for the `bumper` hazard: a slime-trimmed purple float ring under a
+    ribbed jack-o'-lantern (grin toward +X) ringed with bone spikes. Radius 1 at the spike tips; the
+    client scales it uniformly by the bumper's radius and pulses it."""
+    parts = [torus((0, 0, 0.2), 0.74, 0.2, M["magenta"], seg=28, mseg=10)]
+    parts.append(torus((0, 0, 0.36), 0.74, 0.05, M["mint"], seg=28, mseg=6))
+    parts += pumpkin((0, 0, 0.78), 0.66, face=True)
+    for k in range(14):  # equator, leaving the grin (toward +X) clear
+        a = k / 14 * math.tau
+        if math.cos(a) > 0.6:
+            continue
+        d = (math.cos(a), math.sin(a), 0)
+        parts.append(spike((d[0] * 0.62, d[1] * 0.62, 0.78), d, 0.11, 0.38, M["spike"], n=5))
+    for k in range(6):  # shoulders, tilted up
+        a = (k + 0.5) / 6 * math.tau
+        d = Vector((math.cos(a), math.sin(a), 1.0)).normalized()
+        parts.append(spike(Vector((math.cos(a) * 0.4, math.sin(a) * 0.4, 1.12)), d, 0.09, 0.3, M["spike"], n=5))
+    return join("bumper", parts)
 
 
 BAMBOO_H = 8.5  # gate pole height; gates.ts hangs the crossbar at BAR_Z
@@ -503,44 +580,85 @@ def build_gate():
 
 
 def build_tree_round(name="tree_round"):
-    """Puffy rounded tree: lumpy green crown on a curving brown trunk, ~4.4 high."""
-    pts = [(0, 0, 0), (0.15, 0.05, 0.9), (-0.1, 0.0, 1.8), (0.2, -0.05, 2.6), (0.05, 0, 3.2)]
+    """Bare, twisted dead tree with crooked branches and a hanging lantern, ~5 high."""
+    pts = [(0, 0, 0), (0.25, 0.05, 1.0), (-0.15, 0.0, 2.0), (0.3, -0.1, 3.0), (0.0, 0.05, 3.9), (0.35, 0.1, 4.6)]
     parts = []
     for i in range(len(pts) - 1):
-        parts.append(limb(pts[i], pts[i + 1], 0.3 - i * 0.045, 0.3 - (i + 1) * 0.045, M["trunk"], 8))
-    parts.append(limb(pts[2], (-0.75, 0.2, 2.7), 0.1, 0.06, M["trunk"], 6))
-    parts.append(limb(pts[3], (0.85, 0.1, 3.4), 0.1, 0.06, M["trunk"], 6))
-    parts.append(cyl((0.05, 0, 0.05), 0.42, 0.2, M["trunk"], 8))
-    blobs = [  # x, y, z, r, material
-        (0.0, 0.0, 3.6, 1.15, "leaf"),
-        (0.95, 0.2, 3.5, 0.85, "leaf"),
-        (-0.9, -0.2, 3.45, 0.85, "leaf_dk"),
-        (0.3, 0.85, 3.5, 0.8, "leaf"),
-        (-0.3, -0.85, 3.6, 0.8, "leaf_dk"),
-        (0.1, 0.1, 4.25, 0.95, "leaf_hi"),
-        (0.7, -0.5, 4.0, 0.7, "leaf_hi"),
-        (-0.65, 0.55, 4.0, 0.7, "leaf_hi"),
+        parts.append(limb(pts[i], pts[i + 1], 0.34 - i * 0.055, 0.34 - (i + 1) * 0.055, M["trunk"], 7))
+    branches = [  # from point index, to, radius
+        (2, (-1.3, 0.3, 3.0), 0.11),
+        (2, (-1.0, -0.6, 2.4), 0.08),
+        (3, (1.4, 0.4, 3.8), 0.1),
+        (3, (0.9, -0.9, 3.6), 0.08),
+        (4, (-0.9, 0.5, 4.8), 0.07),
+        (4, (0.6, -0.5, 5.0), 0.06),
     ]
-    for x, y, z, r, m in blobs:
-        parts.append(ico((x, y, z), r, M[m], 2, scale=(1, 1, 0.88), smooth=False))
+    for i, (x, y, z), r in branches:
+        a = Vector(pts[i])
+        mid = (a + Vector((x, y, z))) / 2 + Vector((0, 0, 0.35))
+        parts.append(limb(a, mid, r, r * 0.7, M["trunk"], 6))
+        parts.append(limb(mid, (x, y, z), r * 0.7, 0.02, M["trunk"], 6))
+        if r >= 0.1:  # twigs
+            parts.append(limb((x, y, z), (x * 1.15, y * 1.15 + 0.2, z + 0.5), 0.04, 0.01, M["trunk"], 5))
+    for s in (1, -1):  # flared roots
+        parts.append(limb((0, 0, 0.35), (s * 0.7, 0.3 * s, -0.05), 0.16, 0.05, M["trunk"], 6))
+        parts.append(limb((0, 0, 0.35), (0.3 * s, -0.7 * s, -0.05), 0.14, 0.05, M["trunk"], 6))
+    # small jack-o'-lantern hanging from the right branch
+    parts.append(cyl((1.15, 0.33, 3.35), 0.012, 0.6, M["gate_rope"], 4))
+    parts += pumpkin((1.15, 0.33, 2.85), 0.24, face=(0, 0, 0))
     return join(name, parts)
 
 
+def pumpkin(at, r, face=None):
+    """Ribbed pumpkin centred at `at` (base sits at z - 0.8 r); with `face` a carved glowing face toward +x."""
+    x0, y0, z0 = at
+    parts = [sphere(at, (r * 0.85, r * 0.85, r * 0.78), M["pumpkin_dk"], 16, 10)]
+    for i in range(8):
+        a = i / 8 * math.tau
+        rib = sphere((x0 + math.cos(a) * r * 0.42, y0 + math.sin(a) * r * 0.42, z0), (r * 0.55, r * 0.55, r * 0.8), M["pumpkin"], 14, 10)
+        rib.scale = (r * 0.55, r * 0.42, r * 0.8)
+        rib.rotation_euler = (0, 0, a)
+        parts.append(rib)
+    parts.append(cyl((x0, y0, z0 + r * 0.82), r * 0.1, r * 0.35, M["stem"], 6, rot=(0.25, 0.1, 0), r2=r * 0.07))
+    if face is not None:
+        fx = x0 + r * 0.92
+        for s in (1, -1):  # triangle eyes
+            parts.append(tri((fx, y0 + s * r * 0.32, z0 + r * 0.22), r * 0.17, r * 0.12))
+        parts.append(tri((fx, y0, z0 + r * 0.02), r * 0.1, r * 0.12))  # nose
+        parts.append(box((fx - r * 0.02, y0, z0 - r * 0.3), (r * 0.12, r * 0.9, r * 0.16), M["flame"]))  # grin
+        for k in (-1, 1):
+            parts.append(box((fx - r * 0.02, y0 + k * r * 0.2, z0 - r * 0.2), (r * 0.12, r * 0.14, r * 0.12), M["flame"]))
+    return parts
+
+
+def tri(at, r, depth):
+    """Glowing upward triangle prism facing +x (carved eye / nose)."""
+    o = cyl(at, r, depth, M["flame"], 3, smooth=False)
+    o.rotation_mode = "ZYX"  # spin about its own axis first so a corner points up, then face +x
+    o.rotation_euler = (0, math.pi / 2, math.pi)
+    return o
+
+
 def build_bush():
-    parts = []
-    for x, y, r, m in ((0, 0, 0.9, "leaf"), (0.7, 0.3, 0.6, "leaf_hi"), (-0.6, 0.4, 0.65, "leaf"), (0.1, -0.6, 0.6, "leaf_dk"), (0, 0, 0.6, "leaf_hi")):
-        parts.append(ico((x, y, r * 0.7 + (0.5 if r == 0.6 and x == 0 else 0)), r, M[m], 2, scale=(1, 1, 0.85)))
+    """Jack-o'-lantern with a smaller plain pumpkin beside it."""
+    parts = pumpkin((0, 0, 0.5), 0.62, face=True) + pumpkin((-0.35, 0.75, 0.3), 0.38)
     return join("bush", parts)
 
 
 def build_fern():
-    parts = []
-    for i in range(7):
-        a = i / 7 * math.tau
-        leaf = sphere((math.cos(a) * 0.45, math.sin(a) * 0.45, 0.3), (0.5, 0.12, 0.04), M["fern"], 8, 4, smooth=False)
-        leaf.rotation_euler = (0, -0.5, a)
-        parts.append(leaf)
-    parts.append(sphere((0, 0, 0.1), (0.15, 0.15, 0.15), M["leaf"], 8, 4))
+    """Leaning rounded gravestone with a cross, moss at its foot."""
+    slab = box((0, 0, 0.55), (0.18, 0.7, 1.0), M["stone"], bevel=0.04)
+    top = cyl((0, 0, 1.05), 0.35, 0.18, M["stone"], 20, rot=(0, math.pi / 2, 0))
+    parts = [slab, top]
+    parts.append(box((0.1, 0, 0.85), (0.04, 0.08, 0.42), M["stone_dk"]))
+    parts.append(box((0.1, 0, 0.92), (0.04, 0.3, 0.08), M["stone_dk"]))
+    parts.append(box((0, 0, 0.04), (0.5, 0.95, 0.08), M["stone_dk"], bevel=0.02))
+    for x, y in ((0.18, 0.3), (-0.15, -0.35), (0.2, -0.25)):
+        parts.append(ico((x, y, 0.08), 0.13, M["moss"], 1, scale=(1, 1, 0.6)))
+    tilt = Matrix.Rotation(0.12, 4, "Y") @ Matrix.Rotation(0.06, 4, "X")
+    bpy.context.view_layer.update()
+    for o in parts:
+        o.matrix_world = tilt @ o.matrix_world
     return join("fern", parts)
 
 
@@ -562,6 +680,8 @@ def build_all():
         build_raft(),
         build_spinner(),
         build_sweeper(),
+        build_log(),
+        build_bumper(),
         build_spike_strip(),
         build_tree_round(),
         build_bush(),

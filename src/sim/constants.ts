@@ -76,4 +76,22 @@ export const GAS_REGEN = 30; // per second while not farting
 /** How far a sweeper swings either side of its rest angle, radians. */
 export const SWEEP_AMPLITUDE = Math.PI / 4;
 
+/** The crew's lives: each hazard or spike hit costs one, at 0 the raft sinks. */
+export const LIVES = 3;
+/** After a hit the raft is safe for this long, so one collision cannot drain every life. */
+export const INVULNERABLE_TICKS = Math.round(1.5 * TICK_RATE);
+
+/**
+ * A hit throws the raft off balance: it is knocked away from the hazard at this speed (m/s) and
+ * spun at this rate (rad/s), both scaled by the hazard's own `knock`.
+ */
+export const KNOCK_SPEED = 6;
+export const KNOCK_SPIN = 4;
+
+/** A bumper swells by up to this fraction of its radius, and hits this much harder than a bar. */
+export const BUMPER_PULSE = 0.15;
+export const BUMPER_KNOCK = 1.7;
+/** Bumpers are bouncy: their restitution wins over the raft's whatever it is. */
+export const BUMPER_RESTITUTION = 1.5;
+
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;

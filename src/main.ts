@@ -2,6 +2,7 @@ import "./style.css";
 import { Vector3 } from "three";
 import canyon from "../courses/canyon.json";
 import { startLoop } from "./client/loop.ts";
+import { createAudio } from "./client/fx/audio.ts";
 import { createCameraShake } from "./client/fx/cameraShake.ts";
 import { createConfetti } from "./client/fx/confetti.ts";
 import { createParticles } from "./client/fx/particles.ts";
@@ -63,6 +64,11 @@ const particles = createParticles(view.scene);
 const wake = createWake(view.scene);
 const confetti = createConfetti(view.scene);
 const shake = createCameraShake();
+const audio = createAudio();
+addEventListener("keydown", (e) => {
+  if (e.code === "KeyM" && !e.repeat) audio.toggleMute();
+});
+Object.assign(window, { __audio: audio });
 const hud = createHud(app, {
   seatLabels: session.seatLabels(),
   camera: view.camera,
@@ -94,9 +100,11 @@ startLoop(
       shake.onEvent(e);
       hud.onEvent(e);
       wake.onEvent(e);
+      audio.onEvent(e);
       if (e.type === "checkpoint") celebrate(e.index);
       view.onEvent(e);
     }
+    audio.update(curr, cameraHeading);
     hud.setLabels(session.seatLabels());
     particles.update(dt);
     wake.update(dt, lerpPose(prev.raft, curr.raft, alpha));

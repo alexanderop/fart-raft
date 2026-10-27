@@ -14,6 +14,7 @@
     "prepare": "vp config",
     "fmt": "vp fmt",
     "course": "node scripts/canyon.ts",
+    "graveyard": "node scripts/graveyard.ts",
     "blender": "open -a Blender --args \"$PWD/assets-src/fart-raft.blend\" --python \"$PWD/assets-src/start_mcp.py\"",
     "kit": "/Applications/Blender.app/Contents/MacOS/Blender -b assets-src/fart-raft.blend --python assets-src/build_kit.py --python assets-src/export_kit.py"
   },

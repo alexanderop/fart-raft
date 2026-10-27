@@ -1,10 +1,10 @@
 import * as THREE from "three";
 import { CURRENT_SPEED } from "../../sim/constants.ts";
 
-/** Pale sky haze: the fog color, and what the cliffs fade into far below. */
-export const HAZE = 0xeaf5fb;
+/** Purple Halloween dusk: the fog color, and what the cliffs fade into far below. */
+export const HAZE = 0x4a2f6b;
 
-/** Soft gradient dome, light blue overhead to near-white haze at and below the horizon. */
+/** Night dome: near-black violet overhead to purple haze at the horizon, with stars and a big moon. */
 export function createSky(): THREE.Mesh {
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(500, 24, 16),
@@ -14,8 +14,9 @@ export function createSky(): THREE.Mesh {
       fog: false,
       toneMapped: false,
       uniforms: {
-        top: { value: new THREE.Color(0x8cc8f0) },
-        mid: { value: new THREE.Color(0xc9e6f7) },
+        top: { value: new THREE.Color(0x0d0820) },
+        mid: { value: new THREE.Color(0x2b1a4d) },
+        moonDir: { value: new THREE.Vector3(-0.55, 0.45, -0.7).normalize() },
         horizon: { value: new THREE.Color(HAZE) },
       },
       vertexShader: /* glsl */ `
@@ -25,12 +26,18 @@ export function createSky(): THREE.Mesh {
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }`,
       fragmentShader: /* glsl */ `
-        uniform vec3 top; uniform vec3 mid; uniform vec3 horizon;
+        uniform vec3 top; uniform vec3 mid; uniform vec3 horizon; uniform vec3 moonDir;
         varying vec3 vDir;
         void main() {
           float h = clamp(vDir.y, 0.0, 1.0);
           vec3 c = mix(horizon, mid, smoothstep(0.02, 0.25, h));
           c = mix(c, top, smoothstep(0.25, 0.8, h));
+          vec3 cell = floor(vDir * 180.0);
+          float star = step(0.9975, fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
+          c += vec3(star) * smoothstep(0.1, 0.4, h) * 0.8;
+          float m = dot(vDir, moonDir);
+          c = mix(c, vec3(1.0, 0.96, 0.82), smoothstep(0.9965, 0.9975, m));
+          c += vec3(0.55, 0.45, 0.7) * pow(max(m, 0.0), 220.0) * 0.6;
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }`,
@@ -86,14 +93,14 @@ export function createWater() {
         float period = 9.0 + h * 7.0;
         float ph = fract(s / period + h);
         float dash = smoothstep(0.0, 0.06, ph) * (1.0 - smoothstep(0.3, 0.4, ph));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), line * dash * vFlow.z * 0.45);`,
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 1.0, 0.6), line * dash * vFlow.z * 0.45);`,
       );
   };
   // Open water for courses without a channel; channel courses only use the material.
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), material);
   plane.rotation.x = -Math.PI / 2;
   plane.receiveShadow = true;
-  const flat = new THREE.Color(0x3cb8f2);
+  const flat = new THREE.Color(0x2fa87a);
   const colors = new Float32Array(plane.geometry.attributes.position!.count * 3).map(
     (_, i) => [flat.r, flat.g, flat.b][i % 3]!,
   );

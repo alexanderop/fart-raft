@@ -18,6 +18,8 @@ const FART_WINDOW = 0.1; // a seat counts as farting this long after its last fa
 const LEAN_IN = 0.18;
 const REACH = 1.25;
 const WADDLE_RATE = 13; // steps per second-ish while walking
+/** A hit sends the riders reeling: arms flail and bodies sway for this long (s), fading out. */
+const STAGGER_TIME = 1.6;
 
 type Rest = { pos: THREE.Vector3; rotY: number };
 
@@ -44,6 +46,8 @@ type Rider = {
   wobble: Spring;
   cheerAt: number;
   hopAt: number;
+  /** When the last hit staggered this rider. */
+  staggerAt: number;
   slump: number;
   puff: number;
   lean: number;
@@ -93,6 +97,7 @@ export function createRiderAnimator(
       wobble: spring(),
       cheerAt: -10,
       hopAt: -10,
+      staggerAt: -10,
       slump: 0,
       puff: 0,
       lean: 0,
@@ -134,6 +139,20 @@ export function createRiderAnimator(
         });
         break;
       }
+      case "lifeLost": {
+        if (!lastPose) return;
+        // Thrown along (dirX, dirY): the riders lurch the other way, toward the hazard, and flail.
+        const local = Math.atan2(e.dirY, e.dirX) - lastPose.rot;
+        riders.forEach((r, i) => {
+          r.bumpX.v += -Math.cos(local) * 30;
+          r.bumpZ.v += Math.sin(local) * 30;
+          r.wobble.v += (i % 2 ? 1 : -1) * 45;
+          r.hop.v += 4;
+          r.squash.v += 9;
+          r.staggerAt = now + i * 0.04;
+        });
+        break;
+      }
       case "go":
         riders.forEach((r, i) => {
           r.hopAt = now + i * 0.04;
@@ -156,7 +175,7 @@ export function createRiderAnimator(
     lastCountdownSecond = -1;
     for (const r of riders) {
       for (const s of [r.yaw, r.hop, r.squash, r.bumpX, r.bumpZ, r.wobble]) s.x = s.v = 0;
-      r.cheerAt = r.hopAt = r.lastFart = -10;
+      r.cheerAt = r.hopAt = r.lastFart = r.staggerAt = -10;
       r.slump = 0;
     }
   }
@@ -229,6 +248,10 @@ export function createRiderAnimator(
         ? Math.abs(Math.sin(cheerT * (finished ? 5 : 8))) * (finished ? 0.4 : 0.55)
         : 0;
 
+      const staggerT = now - r.staggerAt;
+      const stagger = staggerT >= 0 ? Math.max(0, 1 - staggerT / STAGGER_TIME) ** 1.5 : 0;
+      const reel = stagger * Math.sin(now * 15 + r.phase * 2);
+
       const hopT = now - r.hopAt;
       if (hopT >= 0 && hopT < dt + 1e-3 + 0.02) {
         r.hop.v += 5;
@@ -257,9 +280,15 @@ export function createRiderAnimator(
         -y + Math.sin(r.exhaust) * shuffle + r.bumpZ.x * 0.015 + jitter * 0.015,
       );
       body.rotation.set(
-        Math.sin(t * 0.9) * 0.045 + r.wobble.x * 0.012 + jitter * 0.05 + waddle * 0.14,
+        Math.sin(t * 0.9) * 0.045 + r.wobble.x * 0.012 + jitter * 0.05 + waddle * 0.14 + reel * 0.4,
         r.rest.rotY + r.yaw.x,
-        -LEAN_IN - r.lean * 0.16 - r.slump * 0.22 + Math.sin(t * 0.7 + 1) * 0.025 + r.hop.x * 0.02,
+        -LEAN_IN -
+          r.lean * 0.16 -
+          r.slump * 0.22 -
+          stagger * 0.3 +
+          Math.sin(t * 0.7 + 1) * 0.025 +
+          r.hop.x * 0.02 +
+          reel * 0.12,
         "YXZ",
       );
       const stretch = Math.max(0, r.hop.x) * 0.06;
@@ -297,7 +326,7 @@ export function createRiderAnimator(
         const blink = blinkT >= 0 && blinkT < 1 ? Math.sin(blinkT * Math.PI) * 0.18 : 0;
 
         r.head.rotation.set(
-          r.wobble.x * 0.01,
+          r.wobble.x * 0.01 + reel * 0.5,
           r.lookYaw.x,
           r.lookPitch.x +
             cheer * 0.45 -
@@ -310,14 +339,17 @@ export function createRiderAnimator(
       }
 
       // Arms: down by default, flail while farting, both up when cheering, droop when slumped.
-      const flail = r.puff * (0.7 + 0.5 * Math.sin(now * 28 + r.phase)) + Math.sin(t * 1.3) * 0.06;
+      const flail =
+        r.puff * (0.7 + 0.5 * Math.sin(now * 28 + r.phase)) +
+        Math.sin(t * 1.3) * 0.06 +
+        stagger * (2.6 + 1.6 * Math.sin(now * 24 + r.phase));
       const wave = finished ? Math.sin(now * 9 + r.phase) * 0.35 : 0;
       const up = cheer * 2.7;
       const angL = Math.max(0, up + flail + wave + r.wobble.x * 0.01) - r.slump * 0.05;
       const angR = Math.max(0, up + flail * 0.9 - wave + r.wobble.x * 0.01) - r.slump * 0.05;
       // Left is mirrored from right: left arm raises with +x rotation, right with −x.
       // Hands rest on the ring in front, except while cheering.
-      const reach = REACH * (1 - cheer);
+      const reach = REACH * (1 - cheer) * (1 - 0.85 * stagger);
       if (r.armL) r.armL.rotation.set(angL * 0.4, 0, reach + cheer * 0.2, "XYZ");
       if (r.armR) r.armR.rotation.set(-angR * 0.4, 0, reach + cheer * 0.2, "XYZ");
     });

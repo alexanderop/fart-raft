@@ -1,8 +1,9 @@
 import { Vector3, type PerspectiveCamera } from "three";
 import { nearestS, sampleChannel } from "../../sim/channel.ts";
-import { GAS_MAX, TICK_RATE } from "../../sim/constants.ts";
+import { GAS_MAX, LIVES, TICK_RATE } from "../../sim/constants.ts";
 import { SEAT_COLORS } from "../render/zones.ts";
 import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import "./lives.css";
 
 const LOW_GAS = 0.25;
 /** Fart events fire every tick while a seat farts. A gap longer than this starts a new puff. */
@@ -12,6 +13,9 @@ const TAG_HEIGHT = 2.9;
 
 const CLOCK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M12 7v5.5l3.5 2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PUFF_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.4 8.9a4.8 4.8 0 0 1 .1 9.6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>`;
+
+/** One life: a little pumpkin. */
+const LIFE_ICON = `<svg class="life" viewBox="0 0 32 32" aria-hidden="true"><path class="stem" d="M16 8c0-2.4 1-4 3.2-5"/><ellipse class="rind" cx="10.5" cy="19" rx="7.5" ry="9.5"/><ellipse class="rind" cx="21.5" cy="19" rx="7.5" ry="9.5"/><ellipse class="rind" cx="16" cy="19" rx="5.5" ry="10"/><path class="rib" d="M13 11.5c-1.2 4.5-1.2 11.5 0 15M19 11.5c1.2 4.5 1.2 11.5 0 15"/><path class="face" d="M9.5 17l2.5 3 2.5-3zM17.5 17l2.5 3 2.5-3zM11.5 24c2.7 1.8 6.3 1.8 9 0l-1-1.8c-2.2 1.1-4.8 1.1-7 0z"/></svg>`;
 
 /** Re-run a CSS animation class on an element, even if it is already playing. */
 function replay(el: HTMLElement, className: string) {
@@ -93,6 +97,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         <b class="track-raft" data-raft></b>
       </div>
       <div class="hud-timer" data-status>${CLOCK_ICON}<span data-time>00:00.00</span></div>
+      <div class="hud-lives" data-lives aria-label="Lives">${LIFE_ICON.repeat(LIVES)}</div>
       <div class="hud-farts" data-farts>${PUFF_ICON}<span data-puffs>0</span></div>
       <div class="hud-count" data-count></div>
       <div class="hud-toast" data-toast></div>
@@ -100,6 +105,11 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         <div class="finish-title">Finish!</div>
         <div class="finish-time" data-finish-time></div>
         <div class="finish-hint">R to restart · Esc for menu</div>
+      </div>
+      <div class="hud-hurt" data-hurt></div>
+      <div class="hud-dead" data-dead>
+        <div class="dead-title">Your raft sank</div>
+        <div class="dead-sub">Press R to retry · Esc for menu</div>
       </div>
       <div class="hud-tags">${seatLabels
         .map(
@@ -118,6 +128,9 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const toast = $("[data-toast]");
   const finish = $("[data-finish]");
   const finishTime = $("[data-finish-time]");
+  const livesPill = $("[data-lives]");
+  const hurt = $("[data-hurt]");
+  const dead = $("[data-dead]");
   const fill = $("[data-fill]");
   const raftMark = $("[data-raft]");
   const marks = [...host.querySelectorAll<HTMLElement>(".track-mark")];
@@ -125,6 +138,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const fills = tags.map((g) => g.querySelector<HTMLElement>("i")!);
   const labelSpans = tags.map((g) => g.querySelector<HTMLElement>("span")!);
   const lastGas = tags.map(() => GAS_MAX);
+  const lifeIcons = [...livesPill.querySelectorAll<SVGElement>(".life")];
+  let shownLives = LIVES;
 
   let shownCount = "";
   let puffCount = 0;
@@ -134,6 +149,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
 
   status.addEventListener("animationend", () => status.classList.remove("pop"));
   fartPill.addEventListener("animationend", () => fartPill.classList.remove("pop"));
+  livesPill.addEventListener("animationend", () => livesPill.classList.remove("hit"));
+  hurt.addEventListener("animationend", () => hurt.classList.remove("on"));
 
   const show = (text: string, kind: "slam" | "bounce") => {
     toast.textContent = text;
@@ -198,6 +215,11 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         replay(status, "pop");
       }
       if (e.type === "fart") fartedThisFrame[e.seat] = true;
+      if (e.type === "lifeLost") {
+        replay(hurt, "on");
+        replay(livesPill, "hit");
+        if (e.lives > 0) show("Ouch!", "slam");
+      }
     },
     draw(snap: Snapshot, raft: Pose) {
       const { phase } = snap;
@@ -230,6 +252,14 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         finishTime.textContent = formatTime(phase.timeMs);
         replay(finish, "on");
       } else if (!done) finish.classList.remove("on");
+
+      if (snap.lives !== shownLives) {
+        shownLives = snap.lives;
+        lifeIcons.forEach((icon, i) => icon.classList.toggle("lost", i >= snap.lives));
+      }
+      const sunk = phase.kind === "dead";
+      if (sunk && !dead.classList.contains("on")) replay(dead, "on");
+      else if (!sunk) dead.classList.remove("on");
 
       fills.forEach((bar, i) => {
         const gas = snap.gas[i]!;

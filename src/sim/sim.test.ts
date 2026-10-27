@@ -6,13 +6,16 @@ import {
   COUNTDOWN_TICKS,
   crewZones,
   FART_TICKS,
+  INVULNERABLE_TICKS,
+  LIVES,
   MAX_CREW,
   RIDER_RING,
+  TICK_RATE,
   type Zone,
 } from "./constants.ts";
 import { createSim, initPhysics, snapshot, step } from "./sim.ts";
 import { parseLevel } from "./level.ts";
-import { IDLE_INPUT, type SeatInput, type SimEvent } from "./types.ts";
+import { IDLE_INPUT, type LevelData, type SeatInput, type SimEvent } from "./types.ts";
 
 const level = parseLevel(pond);
 const FULL = crewZones(MAX_CREW);
@@ -162,13 +165,165 @@ describe("given the canyon course", () => {
   describe("when the rear riders fart the raft straight into the first bend", () => {
     it("should keep the raft inside the banks", () => {
       const sim = createSim(canyonLevel, FULL);
-      for (let t = 0; t < COUNTDOWN_TICKS + 8 * 60; t++) step(sim, rearFart);
+      for (let t = 0; t < COUNTDOWN_TICKS + 12 * 60; t++) step(sim, rearFart);
       const { raft } = snapshot(sim);
       const route = sampleChannel(canyonLevel.channel!);
       const s = nearestS(route, raft);
       const center = pointAt(route, s);
       expect(Math.hypot(raft.x - center.x, raft.y - center.y)).toBeLessThan(6);
       expect(s).toBeGreaterThan(20);
+    });
+  });
+});
+
+// A free pond with one fixed bar (a spinner that does not spin) across the raft's way, 8.7 m
+// ahead of its bow. Farting forward drives the raft into it, and the bar never gets out of the way.
+const barLevel: LevelData = {
+  name: "bar",
+  spawn: { x: 0, y: 0, rot: 0 },
+  channel: null,
+  walls: [],
+  checkpoints: [{ x: 500, y: 0, rot: 0, hx: 0.5, hy: 5 }],
+  hazards: [
+    { id: "bar", kind: "spinner", speed: 0, x: 12, y: 0, rot: Math.PI / 2, hx: 8, hy: 0.4 },
+  ],
+};
+
+// A straight channel only just wider than the raft, spiked on both banks: the raft cannot get
+// away from the spikes, however hard each hit throws it.
+const jamLevel: LevelData = {
+  name: "jam",
+  spawn: { x: 0, y: 0, rot: 0 },
+  channel: {
+    halfWidth: 2.9,
+    points: [
+      { x: -6, y: 0 },
+      { x: 400, y: 0 },
+    ],
+    spikes: [
+      { side: "left", from: 0, to: 1000 },
+      { side: "right", from: 0, to: 1000 },
+    ],
+  },
+  walls: [],
+  checkpoints: [{ x: 390, y: 0, rot: 0, hx: 0.5, hy: 3 }],
+  hazards: [],
+};
+
+type Logged = { tick: number; event: SimEvent };
+
+/** Step a level with the rear riders farting, noting the tick of every event. */
+function ram(course: LevelData, ticks: number) {
+  const sim = createSim(course, FULL);
+  const log: Logged[] = [];
+  for (let t = 0; t < ticks; t++)
+    for (const event of step(sim, rearFart)) log.push({ tick: t, event });
+  return { sim, log, snap: snapshot(sim) };
+}
+
+const lost = (log: Logged[]) =>
+  log.flatMap((l) => (l.event.type === "lifeLost" ? [{ tick: l.tick, lives: l.event.lives }] : []));
+const count = (log: Logged[], type: SimEvent["type"]) =>
+  log.filter((l) => l.event.type === type).length;
+
+describe("given a crew with lives", () => {
+  it("should start the race with every life", () => {
+    expect(run(1, () => rearFart).snap.lives).toBe(LIVES);
+  });
+
+  describe("when the raft rams a hazard bar", () => {
+    let rammed: ReturnType<typeof ram>;
+    beforeAll(() => {
+      rammed = ram(barLevel, COUNTDOWN_TICKS + 6 * TICK_RATE);
+    });
+
+    it("should lose a life and say so", () => {
+      expect(lost(rammed.log)[0]?.lives).toBe(LIVES - 1);
+      expect(rammed.snap.lives).toBeLessThan(LIVES);
+    });
+
+    it("should be thrown back by the hit", () => {
+      expect(lost(rammed.log)).toHaveLength(1); // the knock sends the raft away from the bar
+      expect(rammed.snap.raft.x).toBeLessThan(barLevel.hazards[0]!.x - 4);
+    });
+  });
+
+  describe("when the raft is jammed between spiked banks", () => {
+    let pressed: ReturnType<typeof ram>;
+    beforeAll(() => {
+      pressed = ram(jamLevel, COUNTDOWN_TICKS + 20 * TICK_RATE);
+    });
+
+    it("should stay safe for the whole grace window after each hit", () => {
+      const [first, second] = lost(pressed.log);
+      expect(second!.tick - first!.tick).toBeGreaterThanOrEqual(INVULNERABLE_TICKS);
+    });
+
+    it("should lose one life per grace window until none are left", () => {
+      const hits = lost(pressed.log);
+      expect(hits.map((h) => h.lives)).toEqual([2, 1, 0]);
+      hits.slice(1).forEach((h, i) => {
+        expect(h.tick - hits[i]!.tick).toBeGreaterThanOrEqual(INVULNERABLE_TICKS);
+      });
+    });
+
+    it("should end the race in the dead phase", () => {
+      expect(pressed.snap.lives).toBe(0);
+      expect(pressed.snap.phase.kind).toBe("dead");
+      expect(count(pressed.log, "died")).toBe(1);
+      expect(count(pressed.log, "finished")).toBe(0);
+    });
+
+    it("should ignore every input once dead", () => {
+      const before = snapshot(pressed.sim);
+      const events: SimEvent[] = [];
+      const walkAndFart = FULL.map(() => ({ move: { x: 0, y: 1 }, fart: true }));
+      for (let t = 0; t < 120; t++) events.push(...step(pressed.sim, walkAndFart));
+      const after = snapshot(pressed.sim);
+      expect(events.some((e) => e.type === "fart")).toBe(false);
+      expect(after.riders).toEqual(before.riders);
+      expect(after.gas).toEqual(before.gas);
+      expect(after.phase.kind).toBe("dead");
+      expect(after.lives).toBe(0);
+    });
+  });
+
+  describe("when the raft bumps a plain bank", () => {
+    it("should keep every life", () => {
+      // Front riders push the raft backward into the pond's plain back wall.
+      const frontFart: SeatInput[] = [IDLE_INPUT, IDLE_INPUT, fart, fart];
+      const sim = createSim(level, FULL);
+      const events: SimEvent[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++)
+        events.push(...step(sim, frontFart));
+      expect(events.some((e) => e.type === "bump")).toBe(true);
+      expect(events.some((e) => e.type === "lifeLost")).toBe(false);
+      expect(snapshot(sim).lives).toBe(LIVES);
+    });
+  });
+
+  describe("when the raft rams a spiked bank", () => {
+    it("should lose a life", () => {
+      const canyonLevel = parseLevel(canyon);
+      const spiked: LevelData = {
+        ...canyonLevel,
+        hazards: [],
+        channel: {
+          ...canyonLevel.channel!,
+          spikes: [
+            { side: "left", from: 0, to: 1000 },
+            { side: "right", from: 0, to: 1000 },
+          ],
+        },
+      };
+      const { log } = ram(spiked, COUNTDOWN_TICKS + 20 * TICK_RATE);
+      expect(count(log, "lifeLost")).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("when the countdown has not finished", () => {
+    it("should not cost a life", () => {
+      expect(ram(barLevel, COUNTDOWN_TICKS - 1).snap.lives).toBe(LIVES);
     });
   });
 });

@@ -1,3 +1,4 @@
+import { isIsland } from "./island.ts";
 import type { Box, Channel, LevelData, Vec2 } from "./types.ts";
 
 /** One point of the smoothed centerline: position, unit tangent, left normal, arc length. */
@@ -49,8 +50,15 @@ export function pointAt(samples: readonly Sample[], s: number): Sample {
   const last = samples[samples.length - 1]!;
   if (s <= 0) return samples[0]!;
   if (s >= last.s) return last;
-  let i = 1;
-  while (samples[i]!.s < s) i++;
+  // Binary search: the first sample at or beyond `s`.
+  let lo = 1;
+  let hi = samples.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid]!.s < s) lo = mid + 1;
+    else hi = mid;
+  }
+  const i = lo;
   const a = samples[i - 1]!;
   const b = samples[i]!;
   const t = (s - a.s) / (b.s - a.s || 1);
@@ -132,7 +140,15 @@ export function channelWalls(ch: Channel): BankWall[] {
   return walls;
 }
 
-/** Every static collider box of a level: its explicit walls plus the channel's banks. */
+/**
+ * Every static obstacle of a level as a box: its explicit walls plus the channel's banks. An
+ * island becomes the square that holds its octagon, so keeping off the box keeps off the island.
+ */
 export function levelWalls(level: LevelData): Box[] {
-  return level.channel ? [...level.walls, ...channelWalls(level.channel)] : level.walls;
+  const walls = level.walls.map((w) => {
+    if (!isIsland(w)) return w;
+    const r = Math.max(w.hx, w.hy);
+    return { ...w, hx: r, hy: r };
+  });
+  return level.channel ? [...walls, ...channelWalls(level.channel)] : walls;
 }
