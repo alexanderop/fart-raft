@@ -38,7 +38,7 @@ describe("given the server listening on a free port", () => {
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const code = yield* client.CreateRoom({ course: "pond" });
+          const code = yield* client.CreateRoom({ course: "pond", difficulty: "chill" });
           const messages = Array.from(
             yield* Stream.runCollect(client.Join({ code, name: "Ann" }).pipe(Stream.take(2))),
           );
@@ -48,6 +48,7 @@ describe("given the server listening on a free port", () => {
             roster: {
               code,
               course: "pond",
+              difficulty: "chill",
               seats: ["Ann", ...open(MAX_CREW - 1)],
               host: 0,
               crew: [],
@@ -75,7 +76,7 @@ describe("given the server listening on a free port", () => {
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const code = yield* client.CreateRoom({ course: "pond" });
+          const code = yield* client.CreateRoom({ course: "pond", difficulty: "chill" });
           for (let i = 0; i < MAX_CREW; i++) {
             // One inbox per seat: wait for this join's own Welcome, not an earlier seat's roster.
             const joined = yield* Queue.unbounded<unknown>();
@@ -96,7 +97,7 @@ describe("given the server listening on a free port", () => {
     it("should seat both, then deliver frames to the guest", () =>
       withServer((url) =>
         Effect.promise(async () => {
-          const code = await createRoom(url, "pond");
+          const code = await createRoom(url, "pond", "chill");
           const host = await connect(url, code, "Ann");
           const guest = await connect(url, code, "Bo");
           expect([host.seat, guest.seat]).toEqual([0, 1]);

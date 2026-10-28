@@ -82,6 +82,19 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
     m.position.x = -0.5;
     return group(m);
   },
+  // 2 m along x, half-thickness 0.6 across, spike tips at the origin: scaled (hx, 1, hy / 0.6), raised by the client.
+  dropgate_bar: () => group(mesh(new THREE.BoxGeometry(2, 1, 1.2), 0x3b2736, 0.9)),
+  dropgate_post: () => group(mesh(new THREE.BoxGeometry(1, 8.6, 1), 0xe9dfc4, 4.3)),
+  // Radius 1 at the spike tips, scaled uniformly by the mine's radius; the lamp blinks.
+  mine: () => {
+    const lamp = new THREE.Mesh(
+      new THREE.SphereGeometry(0.2, 10, 8),
+      new THREE.MeshLambertMaterial({ color: 0x8be24a, emissive: 0x8be24a }),
+    );
+    lamp.material.name = "mine_lamp";
+    lamp.position.y = 1;
+    return group(mesh(new THREE.SphereGeometry(0.7, 14, 10), 0x2a1b33, 0.35), lamp);
+  },
   // Radius 1, scaled uniformly by the bumper's radius.
   bumper: () => group(mesh(new THREE.SphereGeometry(0.9, 14, 10), 0xf5821f, 0.9)),
   gate_post: () => group(mesh(new THREE.BoxGeometry(0.4, 8.5, 0.4), 0xedb040, 4.25)),

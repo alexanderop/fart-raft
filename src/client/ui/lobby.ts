@@ -1,5 +1,7 @@
 import { connect, createRoom, type Connection } from "../../net/client.ts";
 import { showBanner } from "./banner.ts";
+import { difficultyPicker, MODE_LABELS } from "./difficulty.ts";
+import { lastDifficulty } from "./menu.ts";
 import {
   CODE_LENGTH,
   CODE_LETTERS,
@@ -91,6 +93,7 @@ export function showOnlineMenu(
                   </button>`,
               ).join("")}
             </div>
+            <div data-mode-picker></div>
           </section>
         </div>
         <p class="lobby-error" data-error role="alert"></p>
@@ -103,6 +106,8 @@ export function showOnlineMenu(
   const nameInput = root.querySelector<HTMLInputElement>("[data-name]")!;
   const codeInput = root.querySelector<HTMLInputElement>("[data-code]")!;
   const errorLine = root.querySelector<HTMLElement>("[data-error]")!;
+  const mode = difficultyPicker(lastDifficulty());
+  root.querySelector("[data-mode-picker]")!.append(mode.el);
   const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
 
   nameInput.value = loadName();
@@ -147,7 +152,7 @@ export function showOnlineMenu(
     for (const b of root.querySelectorAll<HTMLButtonElement>("[data-course]")) {
       const course = b.dataset.course;
       if (!isCourseName(course)) continue;
-      b.addEventListener("click", () => enter(() => createRoom(server, course)));
+      b.addEventListener("click", () => enter(() => createRoom(server, course, mode.value())));
     }
     root.querySelector("[data-back]")!.addEventListener("click", () => finish(undefined));
   });
@@ -158,14 +163,16 @@ export function showOnlineMenu(
  * Re-renders on every roster change. Call the returned function to take it down.
  */
 export function showRoom(host: HTMLElement, conn: Connection, invite: string): () => void {
-  const course = PICKABLE.find((c) => c.course === conn.roster().course)?.label ?? "";
+  const { course: picked, difficulty } = conn.roster();
+  const course = PICKABLE.find((c) => c.course === picked)?.label ?? "";
+  const mode = MODE_LABELS[difficulty].label;
   host.insertAdjacentHTML(
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="room-title">
       <div class="menu-card lobby">
         <div class="menu-label" id="room-title">Room code</div>
         <div class="lobby-code" aria-live="polite">${conn.code}</div>
-        <div class="lobby-course-name">${course}</div>
+        <div class="lobby-course-name">${course} · ${mode}</div>
         <div class="lobby-row lobby-invite">
           <input class="lobby-input" readonly value="${escapeHtml(invite)}" aria-label="Invite link" data-link />
           <button type="button" class="menu-online lobby-copy" data-copy>Copy link</button>

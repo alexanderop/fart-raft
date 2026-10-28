@@ -16,7 +16,6 @@ import {
   RIDER_RING,
   STEP,
   crewPower,
-  WALK_SPEED,
   type Zone,
 } from "./constants.ts";
 import type { Pose, RiderPose, SeatInput, SimEvent, Vec2 } from "./types.ts";
@@ -25,6 +24,8 @@ export type Raft = {
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   zones: readonly Zone[];
+  /** How fast riders walk around the ring, m/s: `walkSpeed(difficulty, crew)`. */
+  walkSpeed: number;
   /** Where each rider hangs on the ring: angle in the raft's frame. */
   at: number[];
   gas: number[];
@@ -51,7 +52,12 @@ export const riderPose = (at: number): RiderPose => ({
   face: wrap(at + Math.PI),
 });
 
-export function createRaft(world: RAPIER.World, spawn: Pose, zones: readonly Zone[]): Raft {
+export function createRaft(
+  world: RAPIER.World,
+  spawn: Pose,
+  zones: readonly Zone[],
+  walkSpeed: number,
+): Raft {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(spawn.x, spawn.y)
@@ -70,6 +76,7 @@ export function createRaft(world: RAPIER.World, spawn: Pose, zones: readonly Zon
     body,
     collider,
     zones,
+    walkSpeed,
     // Everyone starts mid-arc. A solo rider starts at the back, like a motor.
     at: zones.map((z) => z.center),
     gas: zones.map(() => GAS_MAX),
@@ -109,7 +116,7 @@ export function applyInputs(
       // Only the part of the stick along the ring moves the rider: push the way you want to go.
       const tangent = rot + at + Math.PI / 2;
       const along = input.move.x * Math.cos(tangent) + input.move.y * Math.sin(tangent);
-      const speed = clamp(along, -1, 1) * WALK_SPEED;
+      const speed = clamp(along, -1, 1) * raft.walkSpeed;
       raft.at[i] = clampToZone(raft.zones[i]!, at + (speed * STEP) / RIDER_RING);
     }
 

@@ -6,13 +6,17 @@ import {
   ServerBusy,
   type CourseName,
 } from "../src/net/protocol.ts";
+import type { Difficulty } from "../src/sim/types.ts";
 import { initPhysics } from "../src/sim/sim.ts";
 import type { LevelData } from "../src/sim/types.ts";
 import { makeRoom, type Room } from "./room.ts";
 
 export interface Interface {
   /** Opens an empty room in the lobby phase and returns its code. */
-  readonly create: (course: CourseName) => Effect.Effect<string, ServerBusy>;
+  readonly create: (
+    course: CourseName,
+    difficulty: Difficulty,
+  ) => Effect.Effect<string, ServerBusy>;
   readonly find: (code: string) => Effect.Effect<Room, RoomNotFound>;
 }
 
@@ -65,13 +69,18 @@ const make = (courses: Record<CourseName, LevelData>, options: LobbyOptions) =>
       Effect.forever(Effect.sleep(options.sweepEvery).pipe(Effect.andThen(sweep))),
     );
 
-    const create = Effect.fn("Lobby.create")(function* (course: CourseName) {
+    const create = Effect.fn("Lobby.create")(function* (
+      course: CourseName,
+      difficulty: Difficulty,
+    ) {
       const taken = yield* Ref.get(rooms);
       if (taken.size >= options.maxRooms) return yield* new ServerBusy();
       let code = yield* randomCode;
       while (taken.has(code)) code = yield* randomCode;
       const scope = yield* Scope.make();
-      const room = yield* makeRoom(code, course, courses[course]).pipe(Scope.provide(scope));
+      const room = yield* makeRoom(code, course, courses[course], difficulty).pipe(
+        Scope.provide(scope),
+      );
       yield* Ref.update(rooms, (m) => new Map(m).set(code, { room, scope, emptySweeps: 0 }));
       return code;
     });

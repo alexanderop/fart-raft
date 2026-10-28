@@ -30,7 +30,7 @@ const run = <A, E>(test: Effect.Effect<A, E, Lobby | Scope.Scope>) =>
 
 const newRoom = Effect.gen(function* () {
   const lobby = yield* Lobby;
-  return yield* lobby.find(yield* lobby.create("pond"));
+  return yield* lobby.find(yield* lobby.create("pond", "chill"));
 });
 
 /** One client holding a seat: everything the server streams to it lands in `inbox`. */
@@ -82,10 +82,26 @@ describe("given the lobby", () => {
       run(
         Effect.gen(function* () {
           const lobby = yield* Lobby;
-          const code = yield* lobby.create("graveyard");
+          const code = yield* lobby.create("graveyard", "chill");
           expect(code).toMatch(/^[A-Z]{4}$/);
           const room = yield* lobby.find(code.toLowerCase());
           expect(room.code).toBe(code);
+        }),
+      ));
+  });
+
+  describe("when a wild room is created and its host starts the race", () => {
+    it("should name the difficulty in the roster and race the sim at it", () =>
+      run(
+        Effect.gen(function* () {
+          const lobby = yield* Lobby;
+          const room = yield* lobby.find(yield* lobby.create("pond", "wild"));
+          const { inbox, welcome } = yield* lease(room);
+          expect(yield* latestRoster(inbox)).toMatchObject({ difficulty: "wild" });
+          yield* room.start(welcome.token);
+          yield* play(1);
+          const frames = yield* framesIn(inbox);
+          expect(frames.at(-1)!.snapshot.difficulty).toBe("wild");
         }),
       ));
   });
@@ -105,7 +121,7 @@ describe("given the lobby", () => {
       run(
         Effect.gen(function* () {
           const lobby = yield* Lobby;
-          const code = yield* lobby.create("pond");
+          const code = yield* lobby.create("pond", "chill");
           yield* TestClock.adjust("30 seconds");
           expect((yield* lobby.find(code)).code).toBe(code);
           yield* TestClock.adjust("30 seconds");

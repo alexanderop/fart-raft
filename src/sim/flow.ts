@@ -1,4 +1,4 @@
-import { COUNTDOWN_TICKS, INVULNERABLE_TICKS, RESPAWN_TICKS, STEP } from "./constants.ts";
+import { COUNTDOWN_TICKS, STEP, type Tuning } from "./constants.ts";
 import type { Phase, SimEvent } from "./types.ts";
 
 // State pattern, smallest form: a union plus a switch. Each phase carries only the data it needs.
@@ -42,6 +42,7 @@ export const freshHealth = (): Health => ({ deaths: 0, respawnIn: 0, invulnerabl
 export function takeHit(
   phase: Phase,
   health: Health,
+  tuning: Tuning,
   at: { x: number; y: number },
   /** Unit vector from the hazard to the raft: the way the hit throws it. */
   away: { x: number; y: number },
@@ -49,17 +50,17 @@ export function takeHit(
 ): boolean {
   if (phase.kind !== "racing" || health.respawnIn > 0 || health.invulnerable > 0) return false;
   health.deaths++;
-  health.respawnIn = RESPAWN_TICKS;
+  health.respawnIn = tuning.respawnTicks;
   events.push({ type: "hit", deaths: health.deaths, x: at.x, y: at.y, dirX: away.x, dirY: away.y });
   return true;
 }
 
 /** One tick of the wipeout cycle. True on the tick the raft should reappear at its last gate. */
-export function tickHealth(health: Health): boolean {
+export function tickHealth(health: Health, tuning: Tuning): boolean {
   health.invulnerable = Math.max(0, health.invulnerable - 1);
   if (health.respawnIn === 0) return false;
   health.respawnIn--;
   if (health.respawnIn > 0) return false;
-  health.invulnerable = INVULNERABLE_TICKS;
+  health.invulnerable = tuning.invulnerableTicks;
   return true;
 }

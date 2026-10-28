@@ -22,6 +22,8 @@ import { IDLE_INPUT, type LevelData, type SeatInput, type SimEvent } from "./typ
 
 const level = parseLevel(pond);
 const FULL = crewZones(4);
+/** These tests pin today's full-speed tuning; chill is covered in hazards.test.ts. */
+const WILD = { difficulty: "wild" } as const;
 const STAND = { x: 0, y: 0 };
 const fart: SeatInput = { move: STAND, fart: true };
 const rearFart: SeatInput[] = [fart, fart, IDLE_INPUT, IDLE_INPUT];
@@ -38,7 +40,7 @@ const walkLeft = (t: number): SeatInput[] =>
   FULL.map(() => ({ move: { x: Math.cos(t / 50), y: 1 }, fart: false }));
 
 function run(ticks: number, inputs: (tick: number) => SeatInput[], zones: readonly Zone[] = FULL) {
-  const sim = createSim(level, zones);
+  const sim = createSim(level, zones, WILD);
   const events: SimEvent[] = [];
   for (let t = 0; t < ticks; t++) events.push(...step(sim, inputs(t)));
   return { sim, events, snap: snapshot(sim) };
@@ -132,7 +134,7 @@ describe("given the pond course", () => {
      * the middle farts once. How far straight ahead does the raft get?
      */
     const fullAhead = (zones: readonly Zone[]) => {
-      const sim = createSim(level, zones);
+      const sim = createSim(level, zones, WILD);
       for (let t = 0; t < COUNTDOWN_TICKS + 90; t++) {
         const riders = snapshot(sim).riders;
         step(
@@ -206,7 +208,7 @@ describe("given the canyon course", () => {
 
   describe("when nobody farts", () => {
     it("should drift downstream with the current once the race starts", () => {
-      const sim = createSim(canyonLevel, FULL);
+      const sim = createSim(canyonLevel, FULL, WILD);
       const route = sampleChannel(canyonLevel.channel!);
       const idle = FULL.map(() => IDLE_INPUT);
       for (let t = 0; t < COUNTDOWN_TICKS; t++) step(sim, idle);
@@ -224,7 +226,7 @@ describe("given the canyon course", () => {
         hazards: [],
         channel: { ...canyonLevel.channel!, spikes: [] },
       };
-      const sim = createSim(plain, FULL);
+      const sim = createSim(plain, FULL, WILD);
       for (let t = 0; t < COUNTDOWN_TICKS + 12 * 60; t++) step(sim, rearFart);
       const { raft } = snapshot(sim);
       const route = sampleChannel(canyonLevel.channel!);
@@ -274,7 +276,7 @@ type Logged = { tick: number; event: SimEvent };
 
 /** Step a level with the rear riders farting, noting the tick of every event. */
 function ram(course: LevelData, ticks: number) {
-  const sim = createSim(course, FULL);
+  const sim = createSim(course, FULL, WILD);
   const log: Logged[] = [];
   for (let t = 0; t < ticks; t++)
     for (const event of step(sim, rearFart)) log.push({ tick: t, event });
@@ -320,7 +322,7 @@ describe("given a crew that can wipe out", () => {
       sim.world.free();
       const hitTick = hits(log)[0]!.tick;
       // Replay up to the hit, then walk and fart through the tumble.
-      const again = createSim(barLevel, FULL);
+      const again = createSim(barLevel, FULL, WILD);
       for (let t = 0; t <= hitTick; t++) step(again, rearFart);
       const before = snapshot(again);
       const events: SimEvent[] = [];
@@ -369,7 +371,7 @@ describe("given a crew that can wipe out", () => {
     it("should not wipe out", () => {
       // Front riders push the raft backward into the pond's plain back wall.
       const frontFart: SeatInput[] = [IDLE_INPUT, IDLE_INPUT, fart, fart];
-      const sim = createSim(level, FULL);
+      const sim = createSim(level, FULL, WILD);
       const events: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++)
         events.push(...step(sim, frontFart));
@@ -435,7 +437,7 @@ describe("given a straight channel with rapids", () => {
 
   describe("when nobody farts", () => {
     it("should carry the raft through the rapids far faster than the calm water", () => {
-      const sim = createSim(straight, FULL);
+      const sim = createSim(straight, FULL, WILD);
       const idle = FULL.map(() => IDLE_INPUT);
       const xAt: number[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 40 * TICK_RATE; t++) {

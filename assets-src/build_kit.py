@@ -235,6 +235,8 @@ def palette():
         moss=mat("moss", 0x5C7A3A, 0.9),
         bark=mat("log_bark", 0x3B2736, 0.85),
         bark_dk=mat("log_bark_dark", 0x2A1B33, 0.9),
+        iron=mat("mine_iron", 0x1E1626, 0.35),
+        lamp=glow("mine_lamp", 0x9CFF4A, 6.0),
     )
 
 
@@ -532,6 +534,65 @@ def build_piston_rod():
     return join("piston_rod", parts)
 
 
+DROPGATE_HALF = 0.6  # bar half-thickness across it; the client scales that axis by hy / DROPGATE_HALF
+DROPGATE_POST_H = 8.6  # tall enough for the bar raised DROPGATE_RAISE (client) plus its 1.5 m beam
+
+
+def build_dropgate_bar():
+    """Heavy spiked bar for the `dropgate` hazard: 2 m along X (the client scales it by hx, so round
+    bits are pre-squeezed for hx ~7), DROPGATE_HALF either side in Y, origin at its spike tips. A purple
+    iron-bound beam with slime bands, a glowing seam on both faces and a double row of bone spikes
+    pointing down. The client raises it by the gate's lift."""
+    sx = 0.14
+    parts = [box((0, 0, 1.05), (2.0, DROPGATE_HALF * 2, 1.0), M["magenta"], bevel=0.06)]
+    parts.append(box((0, 0, 0.56), (2.0, DROPGATE_HALF * 2 + 0.06, 0.12), M["iron"]))  # iron underside
+    parts.append(box((0, 0, 1.58), (2.0, DROPGATE_HALF * 2 + 0.06, 0.1), M["iron"]))  # and top
+    for sgn in (1, -1):
+        parts.append(box((0, sgn * (DROPGATE_HALF + 0.02), 1.05), (1.9, 0.04, 0.1), M["flame"]))  # glowing seam
+        parts.append(box((sgn * 0.99, 0, 1.05), (0.05, DROPGATE_HALF * 2 + 0.1, 1.12), M["gold"]))  # bone end caps
+    for x in (-0.6, -0.2, 0.2, 0.6):
+        parts.append(box((x, 0, 1.05), (0.04, DROPGATE_HALF * 2 + 0.08, 1.08), M["mint"]))
+    for row, y in enumerate((-0.3, 0.3)):
+        for i in range(15):
+            x = -0.875 + i * 0.125 + (0.0625 if row else 0)
+            if abs(x) > 0.93:
+                continue
+            parts.append(spike((x, y, 0.5), (0, 0, -1), 0.19, 0.5, M["spike"], sx, n=5))
+    return join("dropgate_bar", parts)
+
+
+def build_dropgate_post():
+    """Bank post a drop gate's bar runs in: a purple pillar DROPGATE_POST_H tall with bone corners and
+    slime bands, a glowing track on its +X face (toward the bar) and a jack-o'-lantern on top."""
+    h = DROPGATE_POST_H
+    parts = [box((0, 0, h / 2), (1.0, 1.2, h), M["sign_frame"], bevel=0.08)]
+    for cx in (-0.5, 0.5):
+        for cy in (-0.6, 0.6):
+            parts.append(cyl((cx, cy, h / 2), 0.1, h, M["gold"], 8))
+    for z in (0.4, h * 0.45, h - 0.3):
+        parts.append(box((0, 0, z), (1.15, 1.35, 0.16), M["mint"], bevel=0.04))
+    parts.append(box((0.52, 0, h / 2 + 0.3), (0.06, 0.3, h - 1.2), M["flame"]))  # the bar's track
+    parts += pumpkin((0, 0, h + 0.45), 0.55, face=True)
+    return join("dropgate_post", parts)
+
+
+def build_mine():
+    """Floating spiked mine for the `mine` hazard: a black iron ball riding low in the water, a slime
+    band round its waist, bone horns all round and a lime lamp on top that the client blinks (it
+    looks for the `mine_lamp` material). Radius 1 at the horn tips; the client scales it by hx."""
+    zc, r = 0.3, 0.6
+    parts = [sphere((0, 0, zc), (r, r, r), M["iron"], 20, 12)]
+    parts.append(torus((0, 0, zc), r + 0.01, 0.05, M["mint"], seg=28, mseg=6))
+    parts.append(cyl((0, 0, zc + r + 0.08), 0.1, 0.2, M["iron"], 10))
+    parts.append(sphere((0, 0, zc + r + 0.22), (0.15, 0.15, 0.15), M["lamp"], 12, 8))
+    for ring, (elev, n) in enumerate(((0.0, 8), (0.75, 6))):
+        for k in range(n):
+            a = (k + 0.5 * ring) / n * math.tau
+            d = Vector((math.cos(a) * math.cos(elev), math.sin(a) * math.cos(elev), math.sin(elev)))
+            parts.append(spike(Vector((0, 0, zc)) + d * (r - 0.04), d, 0.1, 0.44, M["spike"], n=6))
+    return join("mine", parts)
+
+
 BAMBOO_H = 8.5  # gate pole height; gates.ts hangs the crossbar at BAR_Z
 BAR_Z = 7.4
 
@@ -743,6 +804,9 @@ def build_all():
         build_hammer_post(),
         build_piston(),
         build_piston_rod(),
+        build_dropgate_bar(),
+        build_dropgate_post(),
+        build_mine(),
         build_spike_strip(),
         build_tree_round(),
         build_bush(),

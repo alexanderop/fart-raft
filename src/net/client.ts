@@ -1,7 +1,7 @@
 import { Cause, Context, Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import type { SeatInput } from "../sim/types.ts";
+import type { Difficulty, SeatInput } from "../sim/types.ts";
 import {
   RaftRpcs,
   RoomFull,
@@ -63,13 +63,18 @@ const reasonFor = (cause: Cause.Cause<unknown>, code: string): string => {
 const unreachable = (url: string) => new Error(`No answer from ${url}`);
 
 /** Opens a new room on the server at `url` and returns its code. Nobody holds a seat yet. */
-export async function createRoom(url: string, course: CourseName, timeoutMs = 5000) {
+export async function createRoom(
+  url: string,
+  course: CourseName,
+  difficulty: Difficulty,
+  timeoutMs = 5000,
+) {
   const runtime = ManagedRuntime.make(clientLayer(url));
   try {
     return await runtime.runPromise(
       Effect.gen(function* () {
         const client = yield* RaftClient;
-        return yield* client.CreateRoom({ course });
+        return yield* client.CreateRoom({ course, difficulty });
       }).pipe(
         Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => Effect.fail(unreachable(url)) }),
         Effect.mapError((error) =>

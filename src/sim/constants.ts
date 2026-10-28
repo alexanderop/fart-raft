@@ -1,3 +1,5 @@
+import type { Difficulty, HazardDef } from "./types.ts";
+
 export const TICK_RATE = 60;
 export const STEP = 1 / TICK_RATE;
 
@@ -114,6 +116,70 @@ export const RESPAWN_BACK = 6;
 export const INVULNERABLE_TICKS = Math.round(1.5 * TICK_RATE);
 
 /**
+ * What a difficulty changes. `hazardRate` is how fast hazard time runs against real time: every
+ * hazard's motion is a pure function of hazard time (sim/hazards/shape.ts `hazardTime`), so a
+ * slower clock slows every spinner, hammer, piston and drop gate at once, windows included.
+ * `kindRates` overrides it for single hazard kinds; always read the rate through `hazardRate()`.
+ */
+export type Tuning = {
+  hazardRate: number;
+  kindRates?: Partial<Record<HazardDef["kind"], number>>;
+  respawnTicks: number;
+  respawnBack: number;
+  invulnerableTicks: number;
+  /** Riders walk around the ring this many times WALK_SPEED; a lone rider (whole ring) `soloWalk` times. */
+  walk: number;
+  soloWalk: number;
+};
+
+/**
+ * Chill (the default) is for a lone human on a phone: hazards at 70% speed (spinners and crosses
+ * at 50%: their only window is a launch timed against the bar), a quicker respawn
+ * with a longer run-up (respawning closer put the raft too near the next hazard to time it), twice
+ * the grace after it, and riders who walk the ring faster, so a sharp turn (walk to the far side,
+ * then push) comes sooner. Wild is today's tuning, unchanged.
+ */
+export const DIFFICULTY: Record<Difficulty, Tuning> = {
+  chill: {
+    hazardRate: 0.7,
+    kindRates: { spinner: 0.5, cross: 0.5 },
+    respawnTicks: Math.round(0.5 * TICK_RATE),
+    respawnBack: 8,
+    invulnerableTicks: Math.round(3 * TICK_RATE),
+    walk: 1.5,
+    soloWalk: 2.25,
+  },
+  wild: {
+    hazardRate: 1,
+    respawnTicks: RESPAWN_TICKS,
+    respawnBack: RESPAWN_BACK,
+    invulnerableTicks: INVULNERABLE_TICKS,
+    walk: 1,
+    soloWalk: 1,
+  },
+};
+/**
+ * How fast hazard time runs for a hazard of `kind` at `difficulty`. The sim, the bots and the
+ * renderer all ask this (through `hazardTime`), so a per-kind override keeps them in sync.
+ */
+export function hazardRate(difficulty: Difficulty, kind: HazardDef["kind"]): number {
+  const t = DIFFICULTY[difficulty];
+  return t.kindRates?.[kind] ?? t.hazardRate;
+}
+
+export const DIFFICULTIES = ["chill", "wild"] as const satisfies readonly Difficulty[];
+export const DEFAULT_DIFFICULTY: Difficulty = "chill";
+
+/**
+ * How fast (m/s) a rider walks around the ring in a crew of `crew` at `difficulty`. The sim
+ * moves riders at this speed; anything that predicts a rider's walk must ask this, not WALK_SPEED.
+ */
+export function walkSpeed(difficulty: Difficulty, crew: number): number {
+  const t = DIFFICULTY[difficulty];
+  return WALK_SPEED * (crew === 1 ? t.soloWalk : t.walk);
+}
+
+/**
  * A hit throws the raft off balance: it is knocked away from the hazard at this speed (m/s) and
  * spun at this rate (rad/s), both scaled by the hazard's own `knock`.
  */
@@ -136,6 +202,22 @@ export const HAMMER_KNOCK = 1.3;
 export const PISTON_REST = 0.45;
 export const PISTON_HOLD = 0.2;
 export const PISTON_KNOCK = 1.4;
+
+/**
+ * A drop gate's cycle, by default: DROPGATE_PERIOD s from slam to slam, of which the bar rests on
+ * the water DROPGATE_DOWN s and rises again over DROPGATE_RISE s. Each gate may set its own.
+ * Before it slams it shakes for DROPGATE_SHAKE s (the tell), and the slam itself takes DROPGATE_SLAM s.
+ */
+export const DROPGATE_PERIOD = 6;
+export const DROPGATE_DOWN = 0.7;
+export const DROPGATE_RISE = 1.4;
+export const DROPGATE_SHAKE = 0.5;
+export const DROPGATE_SLAM = 0.15;
+/** A drop gate lower than this fraction of its full lift reaches the riders' heads and hurts. */
+export const DROPGATE_HIT_LIFT = 0.3;
+export const DROPGATE_KNOCK = 1.3;
+/** A mine bursts: it throws the raft a bit harder than a bar does. */
+export const MINE_KNOCK = 1.2;
 
 /**
  * Rapids: stretches of a channel where the water runs at RAPIDS_SPEED m/s instead of

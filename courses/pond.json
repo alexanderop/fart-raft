@@ -20,11 +20,11 @@
       "id": "spinner-1",
       "kind": "spinner",
       "x": 62,
-      "y": 0,
+      "y": -1,
       "rot": 0,
-      "hx": 3.5,
+      "hx": 2.6,
       "hy": 0.4,
-      "speed": 1.2
+      "speed": -1.2
     }
   ]
 }

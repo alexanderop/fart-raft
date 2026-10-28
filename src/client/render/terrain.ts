@@ -383,8 +383,8 @@ const SWAY: Record<string, SwayOptions> = {
 
 export type Terrain = {
   group: THREE.Group;
-  /** Call every frame with wall-clock seconds and the raft's current pose. */
-  update(time: number, raft: Pose): void;
+  /** Call every frame with wall-clock seconds, the raft's current pose and the camera (gate fade). */
+  update(time: number, raft: Pose, camera: THREE.Camera): void;
   /** Gate bounce and flash on checkpoint events. */
   onEvent(e: SimEvent): void;
 };
@@ -411,9 +411,9 @@ export function buildTerrain(level: LevelData, kit: Kit, water: THREE.Material):
 
   return {
     group: root,
-    update(time, raft) {
+    update(time, raft, camera) {
       wind.update(time, raft);
-      gates.update(time);
+      gates.update(time, raft, camera);
     },
     onEvent: (e) => gates.onEvent(e),
   };

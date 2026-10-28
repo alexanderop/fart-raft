@@ -154,7 +154,7 @@ export async function localSession(
   await physics;
   const crew = crewZones(crewSize(config));
 
-  let sim = createSim(level, crew);
+  let sim = createSim(level, crew, { difficulty: config.difficulty });
   let prev = snapshot(sim);
   let curr = prev;
   let pending: SimEvent[] = [];
@@ -165,7 +165,7 @@ export async function localSession(
 
   function restart() {
     sim.world.free();
-    sim = createSim(level, crew);
+    sim = createSim(level, crew, { difficulty: config.difficulty });
     prev = curr = snapshot(sim);
     driver.reset();
   }

@@ -1,14 +1,25 @@
 import * as THREE from "three";
-import { bumperRadius, hammerLift, hammerPivot, pistonOut } from "../../sim/hazards/shape.ts";
+import {
+  bumperRadius,
+  dropgateLift,
+  dropgateShake,
+  hammerLift,
+  hammerPivot,
+  mineCenter,
+  pistonOut,
+} from "../../sim/hazards/shape.ts";
 import type { HazardDef, Pose } from "../../sim/types.ts";
 import { applyPose } from "./coords.ts";
 import type { Kit } from "./kit.ts";
 
+/** Where the frame is seen from: the camera (three space) and the raft (sim pose). */
+export type Eye = { camera: THREE.Vector3; raft: Pose };
+
 /** One hazard's mesh, kept in step with its sim pose. */
 export type HazardView = {
   root: THREE.Object3D;
-  /** `pose` is the interpolated sim pose, `t` the sim time (s) the frame shows. */
-  update(pose: Pose, t: number): void;
+  /** `pose` is the interpolated sim pose, `t` the hazard time (s, `hazardTime`) the frame shows, `eye` the view. */
+  update(pose: Pose, t: number, eye: Eye): void;
 };
 
 /**
@@ -22,9 +33,65 @@ const BOB = 0.08;
 const HAMMER_HALF = 1.5;
 /** The piston's ram reaches this far (m) behind the head when it rests, into the bank. */
 const ROD_REST = 0.6;
+/**
+ * `dropgate_bar` in the kit: its half-thickness across the bar, scaled to the gate's hy. Raised, the
+ * bar's spike tips hang DROPGATE_RAISE m above the water, over the riders and under the camera's
+ * line to the raft until the raft is well past it (and then the bar fades, see `occludes`).
+ */
+const DROPGATE_HALF = 0.6;
+const DROPGATE_RAISE = 6.2;
+/** The posts stand this far (m) beyond the bar's ends, on the banks. */
+const DROPGATE_POST_OUT = 0.7;
+/** A slam's splash spreads and fades over this many seconds. */
+const SPLASH_TIME = 0.6;
+/** How far a raised bar fades when it hides the raft from the camera, and how fast (1/s). */
+const FADED = 0.22;
+const FADE_RATE = 8;
+/** A mine bobs this high (m), and its lamp blinks once per this many seconds. */
+const MINE_BOB = 0.1;
+const MINE_BLINK = 1.4;
+
+/**
+ * Does a bar hanging `height` m up on the line through (x, y) along `rot` stand between the camera
+ * and the raft? It does when the two are on either side of the line and the sight line crosses it
+ * near the bar's height.
+ */
+function occludes(x: number, y: number, rot: number, height: number, eye: Eye): boolean {
+  const nx = -Math.sin(rot);
+  const ny = Math.cos(rot);
+  const raft = (eye.raft.x - x) * nx + (eye.raft.y - y) * ny;
+  const cam = (eye.camera.x - x) * nx + (-eye.camera.z - y) * ny;
+  if (Math.sign(raft) === Math.sign(cam)) return false;
+  const f = cam / (cam - raft);
+  const sight = eye.camera.y + (1.2 - eye.camera.y) * f; // aimed at the riders, about 1.2 m up
+  return sight > height - 1.5 && sight < height + 2.5;
+}
+
+/** Per-view copies of the template's materials, so one hazard can fade or glow on its own. */
+function ownMaterials(root: THREE.Object3D, pick: (m: THREE.Material) => boolean = () => true) {
+  const own: (THREE.MeshStandardMaterial | THREE.MeshLambertMaterial)[] = [];
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const material: unknown = o.material;
+    const lit =
+      material instanceof THREE.MeshStandardMaterial ||
+      material instanceof THREE.MeshLambertMaterial;
+    if (!lit || !pick(material)) return;
+    const copy = material.clone();
+    o.material = copy;
+    own.push(copy);
+  });
+  return own;
+}
+
+/** Kit nodes for kinds whose main mesh is not named after the kind. */
+const ASSET: Partial<Record<HazardDef["kind"], string>> = {
+  cross: "spinner",
+  dropgate: "dropgate_bar",
+};
 
 export function createHazardView(kit: Kit, def: HazardDef): HazardView {
-  const mesh = kit.clone(def.kind === "cross" ? "spinner" : def.kind);
+  const mesh = kit.clone(ASSET[def.kind] ?? def.kind);
   switch (def.kind) {
     case "spinner":
       mesh.scale.set(def.hx, def.hy, def.hy);
@@ -86,6 +153,90 @@ export function createHazardView(kit: Kit, def: HazardDef): HazardView {
           // Distance travelled along the sim's left of the axis, from where the log started.
           const run = -(pose.x - def.x) * Math.sin(def.rot) + (pose.y - def.y) * Math.cos(def.rot);
           mesh.rotation.x = -run / def.hy;
+        },
+      };
+    }
+    case "dropgate": {
+      // The posts stand on the banks; the bar rides up and down between them by the shared schedule.
+      const holder = new THREE.Group();
+      for (const side of [1, -1]) {
+        const post = kit.clone("dropgate_post");
+        post.position.x = side * (def.hx + DROPGATE_POST_OUT);
+        post.rotation.y = side > 0 ? Math.PI : 0; // its slot faces the bar
+        holder.add(post);
+      }
+      mesh.scale.set(def.hx, 1, def.hy / DROPGATE_HALF);
+      holder.add(mesh);
+      const faded = ownMaterials(mesh);
+      for (const m of faded) m.transparent = true;
+      const spray = new THREE.MeshBasicMaterial({
+        color: 0xe8f6ff,
+        transparent: true,
+        depthWrite: false,
+      });
+      const splash = new THREE.Mesh(new THREE.CircleGeometry(1, 24), spray);
+      splash.rotation.x = -Math.PI / 2;
+      splash.position.y = 0.05;
+      splash.visible = false;
+      holder.add(splash);
+      applyPose(holder, def);
+      let opacity = 1;
+      let lastT = 0;
+      let lastLift = 1;
+      let slamAt = -Infinity;
+      return {
+        root: holder,
+        update(_, t, eye) {
+          const lift = dropgateLift(def, t);
+          if (t < lastT) slamAt = -Infinity; // a restart
+          if (lift === 0 && lastLift > 0) slamAt = t;
+          const dt = Math.min(0.1, Math.max(0, t - lastT));
+          lastT = t;
+          lastLift = lift;
+          // The tell: the bar rattles on its chains before it drops.
+          const shake = dropgateShake(def, t);
+          const height = lift * DROPGATE_RAISE;
+          mesh.position.set(
+            Math.sin(t * 71) * 0.07 * shake,
+            height + Math.sin(t * 53) * 0.12 * shake,
+            0,
+          );
+          mesh.rotation.x = Math.sin(t * 61) * 0.06 * shake;
+          const target = lift > 0.5 && occludes(def.x, def.y, def.rot, height, eye) ? FADED : 1;
+          opacity += (target - opacity) * Math.min(1, FADE_RATE * dt);
+          for (const m of faded) {
+            m.opacity = opacity;
+            m.depthWrite = opacity > 0.99;
+          }
+          // The slam throws up a sheet of spray along the bar.
+          const since = (t - slamAt) / SPLASH_TIME;
+          splash.visible = since >= 0 && since < 1;
+          if (splash.visible) {
+            splash.scale.set(def.hx * (0.9 + 0.3 * since), (1 + 3.5 * since) * def.hy * 1.5, 1);
+            spray.opacity = 0.75 * (1 - since);
+          }
+        },
+      };
+    }
+    case "mine": {
+      // Bobs on the water and turns slowly; its lamp blinks, each mine on its own beat.
+      const holder = new THREE.Group();
+      mesh.scale.setScalar(def.hx);
+      holder.add(mesh);
+      const lamps = ownMaterials(mesh, (m) => m.name === "mine_lamp");
+      const glow = lamps.map((m) => m.emissiveIntensity);
+      const beat = (def.phase ?? 0) + def.x * 0.37;
+      return {
+        root: holder,
+        update(_, t) {
+          applyPose(
+            holder,
+            { ...mineCenter(def, t), rot: 0.3 * t + beat },
+            MINE_BOB * Math.sin(t * 2.1 + beat),
+          );
+          const u = (t / MINE_BLINK + beat) % 1;
+          const blink = Math.max(0, 1 - Math.abs(u - 0.1) / 0.1); // a short flash, then dim
+          lamps.forEach((m, i) => (m.emissiveIntensity = glow[i]! * (0.25 + 1.5 * blink)));
         },
       };
     }

@@ -1,6 +1,6 @@
 // Generates courses/canyon.json. Rerun after editing the spec: `pnpm course`.
-// Five legs: sweepers and spinners down the winding canyon, rapids, the hammer gauntlet, piston
-// alley, and a last rapids run to the finish.
+// Five legs: sweepers, spinners, a drop gate and a bumper down the winding canyon, rapids, the hammer
+// gauntlet, piston alley, and a minefield before the rapids run to the finish.
 // Checkpoints and hazards are placed by arc length along the channel, so moving a control
 // point keeps every gate square to the stream.
 import { HAMMER_ARM, SWEEP_AMPLITUDE } from "../src/sim/constants.ts";
@@ -43,7 +43,7 @@ const channel: Channel = {
   ],
 };
 
-const { samples, length, at, across, gate, outerBends } = channelKit(channel);
+const { samples, length, at, across, gate, outerBends, dropgate, mine } = channelKit(channel);
 
 /**
  * Hinged on one bank, resting diagonally downstream: it swings between straight across and
@@ -103,6 +103,19 @@ function piston(id: string, s: number, side: 1 | -1, speed: number, phase: numbe
   };
 }
 
+const SPINNER_OFFSET = 1;
+
+/**
+ * A spinner whose 5.2 m bar turns about a hub SPINNER_OFFSET m off the centerline, toward the bank
+ * its bar sweeps upstream. On the other side, where the bar swings downstream with the raft, the
+ * lane along the bank is open for over half of every half-turn: a straight run gets through.
+ * (A centered bar shuts that lane for 70% of the turn however short it is: what blocks the
+ * 5.6 m hull is the hub end of the bar, not its tip.)
+ */
+function spinner(id: string, s: number, speed: number): HazardDef {
+  const side = speed > 0 ? 1 : -1; // counter-clockwise sweeps upstream on the left bank
+  return { ...across(s, 2.6, 0.4, side * SPINNER_OFFSET), id, kind: "spinner", speed };
+}
 // Spikes line the outer bank of every bend, where a raft carried by its momentum hits.
 channel.spikes = outerBends(0.03);
 
@@ -112,17 +125,22 @@ const level: LevelData = {
   spawn: { x: start.x, y: start.y, rot: Math.atan2(start.ty, start.tx) },
   channel,
   walls: [],
-  checkpoints: [gate(100), gate(240), gate(433), gate(605), gate(705), gate(length - 6)],
+  // A gate just past spinner-1, on the gentle run before the spiked bend, so a wipeout at the bend
+  // or the log respawns past the spinner instead of in front of it.
+  checkpoints: [gate(100), gate(165), gate(240), gate(433), gate(605), gate(705), gate(length - 6)],
   hazards: [
     sweeper("sweeper-1", 26, 1, 1.3),
-    { ...across(147, 3.6, 0.4), id: "spinner-1", kind: "spinner", speed: 1.1 },
+    spinner("spinner-1", 147, 1.1),
     // A log rolls from bank to bank on the straight before the second half: the raft slips past
     // behind it or ahead of it.
     { ...across(205, 2.4, 1), id: "log-1", kind: "log", speed: 0.7, range: 3 },
     sweeper("sweeper-2", 276, -1, 1.6),
+    // A lone drop gate on the calm run before the bumper teaches its timing: wait for it to slam,
+    // then dash under it while it rises.
+    dropgate("dropgate-1", 310, { phase: 2 }),
     // A pumpkin bumper on the left of the last long run: the raft takes the right lane.
     { ...across(345, 1.5, 1.5, 2.5), id: "bumper-1", kind: "bumper", speed: 2.2 },
-    { ...across(415, 3.6, 0.4), id: "spinner-2", kind: "spinner", speed: -1.2 },
+    spinner("spinner-2", 415, -1.2),
     // The hammer gauntlet: three mallets from alternating banks, slamming one after another.
     hammer("hammer-1", 552, 1, 1.4, 0),
     hammer("hammer-2", 568, -1, 1.4, 2.1),
@@ -132,6 +150,11 @@ const level: LevelData = {
     piston("piston-2", 650, -1, 1.5, 2),
     piston("piston-3", 666, 1, 1.5, 4),
     piston("piston-4", 682, -1, 1.5, 6),
+    // The minefield, clear of the bend before it: mines line the right half of the channel, one
+    // of them drifting up and down the stream, and the left lane stays open all the way.
+    mine("mine-1", 732, -3.6, 0.8),
+    mine("mine-2", 746, -3.8, 0.8, { range: 3, speed: 0.7, along: true }),
+    mine("mine-3", 760, -3.4, 0.8),
   ],
 };
 

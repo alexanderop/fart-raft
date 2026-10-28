@@ -1,5 +1,5 @@
 import { CURRENT_SPEED, RAFT_HULL, STEP, TICK_RATE, type Zone } from "../sim/constants.ts";
-import { hazardBoxes as boxesOf } from "../sim/hazards/shape.ts";
+import { hazardBoxes as boxesOf, hazardTime } from "../sim/hazards/shape.ts";
 import { clampToZone } from "../sim/raft.ts";
 import { levelWalls, pointAt, sampleChannel } from "../sim/channel.ts";
 import {
@@ -84,7 +84,7 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 function hazardBoxes(level: LevelData, snap: Snapshot, except: readonly string[] = []): Box[] {
   return level.hazards
     .filter((h) => !except.includes(h.id))
-    .flatMap((h) => boxesOf(h, snap.tick * STEP));
+    .flatMap((h) => boxesOf(h, hazardTime(snap.difficulty, snap.tick, h.kind)));
 }
 
 /** Is the lane `lat` free of rocks and banks for `until` metres ahead of arc length `s`? */

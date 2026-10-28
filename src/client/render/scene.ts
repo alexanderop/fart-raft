@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { crewZones, STEP } from "../../sim/constants.ts";
-import type { LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
+import { crewZones } from "../../sim/constants.ts";
+import { hazardTime } from "../../sim/hazards/shape.ts";
+import type { HazardDef, LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
 import { applyPose, lerpPose } from "./coords.ts";
 import { createSky, createWater, HAZE } from "./env.ts";
 import { loadKit } from "./kit.ts";
@@ -77,11 +78,12 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
   const terrain = buildTerrain(level, kit, water.material);
   scene.add(terrain.group);
 
-  const hazards = new Map<string, HazardView>(
+  // Each view with its kind: hazard time runs at the kind's rate (`hazardTime`).
+  const hazards = new Map<string, { view: HazardView; kind: HazardDef["kind"] }>(
     level.hazards.map((h) => {
       const view = createHazardView(kit, h);
       scene.add(view.root);
-      return [h.id, view] as const;
+      return [h.id, { view, kind: h.kind }] as const;
     }),
   );
 
@@ -150,17 +152,22 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
       applyPose(raft, pose);
       motion.update(dt, now, prev, curr, pose);
       riders.update(dt, now, prev, curr, alpha, pose);
+      // The camera is where it was last frame: close enough to tell what hides the raft.
+      const eye = { camera: camera.position, raft: pose };
+      // Hazard time between the two snapshots: online they are FRAME_TICKS apart, not one.
+      const tick = prev.tick + (curr.tick - prev.tick) * alpha;
       curr.hazards.forEach((h, i) => {
-        hazards
-          .get(h.id)
-          ?.update(lerpPose(prev.hazards[i] ?? h, h, alpha), (prev.tick + alpha) * STEP);
+        const hazard = hazards.get(h.id);
+        if (!hazard) return;
+        const t = hazardTime(curr.difficulty, tick, hazard.kind);
+        hazard.view.update(lerpPose(prev.hazards[i] ?? h, h, alpha), t, eye);
       });
       chase.update(camera, dt, pose, curr, motion.vel, motion.thrust, shake);
       // Tight shadow frustum that follows the raft.
       sun.target.position.set(pose.x, 0, -pose.y);
       sun.position.copy(sun.target.position).add(SUN_OFFSET);
       sky.position.copy(camera.position);
-      terrain.update(now, pose);
+      terrain.update(now, pose, camera);
       water.update(now);
       renderer.render(scene, camera);
     },

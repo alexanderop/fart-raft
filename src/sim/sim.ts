@@ -1,5 +1,15 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { crewZones, MAX_CREW, RESPAWN_BACK, STEP, type Zone } from "./constants.ts";
+import {
+  crewZones,
+  DEFAULT_DIFFICULTY,
+  DIFFICULTY,
+  hazardRate,
+  MAX_CREW,
+  STEP,
+  type Tuning,
+  walkSpeed,
+  type Zone,
+} from "./constants.ts";
 import { flowSpeed, nearestS, pointAt, sampleChannel, type Sample } from "./channel.ts";
 import {
   freshHealth,
@@ -23,6 +33,7 @@ import {
 } from "./raft.ts";
 import type {
   Channel,
+  Difficulty,
   LevelData,
   Phase,
   Pose,
@@ -40,6 +51,8 @@ export type Sim = {
   channel: Channel | null;
   stream: Sample[] | null;
   hazards: Hazard[];
+  /** Hazard seconds per tick for each hazard, in `hazards` order (`hazardRate` of its kind). */
+  hazardSteps: number[];
   checkpointByHandle: Map<number, number>;
   /** Collider handles that wipe the crew out on contact (hazards, spiked banks) → how hard they throw the raft. */
   harmful: Map<number, number>;
@@ -49,13 +62,25 @@ export type Sim = {
   respawnAt: Pose[];
   phase: Phase;
   tick: number;
+  difficulty: Difficulty;
+  tuning: Tuning;
 };
+
+export type SimOptions = { difficulty?: Difficulty };
 
 /** Rapier ships as WASM. Call once before createSim, in the browser and in Node. */
 export const initPhysics = (): Promise<void> => RAPIER.init();
 
-/** `zones` is the crew layout from `crewZones(n)`, one zone per rider (human or bot). */
-export function createSim(level: LevelData, zones: readonly Zone[] = crewZones(MAX_CREW)): Sim {
+/**
+ * `zones` is the crew layout from `crewZones(n)`, one zone per rider (human or bot). The
+ * difficulty (default chill) picks the hazard clock and the wipeout timings from `DIFFICULTY`.
+ */
+export function createSim(
+  level: LevelData,
+  zones: readonly Zone[] = crewZones(MAX_CREW),
+  { difficulty = DEFAULT_DIFFICULTY }: SimOptions = {},
+): Sim {
+  const tuning = DIFFICULTY[difficulty];
   const world = new RAPIER.World({ x: 0, y: 0 }); // top-down: no gravity, water drag comes from damping
   world.timestep = STEP;
   const { checkpointByHandle, spikeHandles } = buildLevel(world, level);
@@ -63,10 +88,12 @@ export function createSim(level: LevelData, zones: readonly Zone[] = crewZones(M
   return {
     world,
     eventQueue: new RAPIER.EventQueue(true),
-    raft: createRaft(world, level.spawn, zones),
+    raft: createRaft(world, level.spawn, zones, walkSpeed(difficulty, zones.length)),
     channel: level.channel,
     stream: level.channel ? sampleChannel(level.channel) : null,
     hazards,
+    // Hazard time runs at the difficulty's rate for each kind: the clock `hazardTime` gives bots and renderer.
+    hazardSteps: level.hazards.map((def) => STEP * hazardRate(difficulty, def.kind)),
     checkpointByHandle,
     harmful: new Map([
       ...[...spikeHandles].map((h) => [h, 1] as const),
@@ -74,9 +101,11 @@ export function createSim(level: LevelData, zones: readonly Zone[] = crewZones(M
     ]),
     health: freshHealth(),
     checkpointCount: level.checkpoints.length,
-    respawnAt: respawnPoses(level),
+    respawnAt: respawnPoses(level, tuning.respawnBack),
     phase: initialPhase(),
     tick: 0,
+    difficulty,
+    tuning,
   };
 }
 
@@ -87,14 +116,14 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   const racing = sim.phase.kind === "racing";
   // A wiped-out crew tumbles helplessly until it respawns: no walking, no farting.
   if (sim.health.respawnIn === 0) applyInputs(sim.raft, inputs, racing, events);
-  if (tickHealth(sim.health)) {
+  if (tickHealth(sim.health, sim.tuning)) {
     const next = sim.phase.kind === "racing" ? sim.phase.nextCheckpoint : 0;
     const at = sim.respawnAt[next]!;
     placeRaft(sim.raft, at);
     events.push({ type: "respawn", x: at.x, y: at.y });
   }
   applyWaterDrag(sim.raft, racing ? flowAt(sim, sim.raft.body.translation()) : STILL);
-  for (const hazard of sim.hazards) hazard.update(STEP);
+  sim.hazards.forEach((hazard, i) => hazard.update(sim.hazardSteps[i]!));
 
   sim.world.step(sim.eventQueue);
   // A fast hazard (a piston's punch) can strike and bounce the raft clear within one step, so a
@@ -119,7 +148,8 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   // Touching a hazard or a spiked bank wipes the crew out; the knock sends it tumbling.
   if (sim.phase.kind === "racing" && sim.health.respawnIn === 0 && sim.health.invulnerable === 0) {
     const hit = touchingHarm(sim) ?? strike(sim, struck);
-    if (hit && takeHit(sim.phase, sim.health, sim.raft.body.translation(), hit.away, events))
+    const at = sim.raft.body.translation();
+    if (hit && takeHit(sim.phase, sim.health, sim.tuning, at, hit.away, events))
       knockBack(sim.raft, hit.away, hit.knock);
   }
 
@@ -168,22 +198,22 @@ function awayFrom(thing: RAPIER.Collider, p: Vec2): Vec2 {
 const STILL = { x: 0, y: 0 };
 
 /**
- * Respawn pose per "next checkpoint": index 0 is the start, index i a run-up RESPAWN_BACK m
+ * Respawn pose per "next checkpoint": index 0 is the start, index i a run-up `back` m
  * upstream of gate i − 1, facing downstream (on a course without a channel: back along the line
  * from the previous gate, facing the way the start does).
  */
-function respawnPoses(level: LevelData): Pose[] {
+function respawnPoses(level: LevelData, back: number): Pose[] {
   const stream = level.channel ? sampleChannel(level.channel) : null;
   const gates = level.checkpoints.slice(0, -1).map((gate, i): Pose => {
     if (stream) {
-      const at = pointAt(stream, Math.max(0, nearestS(stream, gate) - RESPAWN_BACK));
+      const at = pointAt(stream, Math.max(0, nearestS(stream, gate) - back));
       return { x: at.x, y: at.y, rot: Math.atan2(at.ty, at.tx) };
     }
     const from = i === 0 ? level.spawn : level.checkpoints[i - 1]!;
     const dx = gate.x - from.x;
     const dy = gate.y - from.y;
-    const back = Math.min(RESPAWN_BACK, Math.hypot(dx, dy)) / (Math.hypot(dx, dy) || 1);
-    return { x: gate.x - dx * back, y: gate.y - dy * back, rot: level.spawn.rot };
+    const k = Math.min(back, Math.hypot(dx, dy)) / (Math.hypot(dx, dy) || 1);
+    return { x: gate.x - dx * k, y: gate.y - dy * k, rot: level.spawn.rot };
   });
   return [level.spawn, ...gates];
 }
@@ -206,6 +236,7 @@ function pose(body: RAPIER.RigidBody): Pose {
 export function snapshot(sim: Sim): Snapshot {
   return {
     tick: sim.tick,
+    difficulty: sim.difficulty,
     raft: pose(sim.raft.body),
     riders: sim.raft.at.map(riderPose),
     gas: [...sim.raft.gas],

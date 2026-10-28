@@ -1,7 +1,7 @@
 // Generates courses/graveyard.json. Rerun after editing the spec: `pnpm graveyard`.
 // A spooky course on wide, slow pools: octagon islands (thick `walls`) split the water into
-// lanes, and the new hazards guard them: rolling spiked logs, pumpkin bumpers and one witch's
-// mill. Everything is placed by arc length along the channel (see scripts/course.ts).
+// lanes, and the new hazards guard them: rolling spiked logs, pumpkin bumpers, one witch's
+// mill, two drop gates and a few mines before the rapids. Everything is placed by arc length along the channel (see scripts/course.ts).
 import type { Box, Channel, HazardDef, LevelData } from "../src/sim/types.ts";
 import { channelKit, round, writeCourse } from "./course.ts";
 
@@ -25,7 +25,7 @@ const channel: Channel = {
   rapids: [{ from: 405, to: 470 }],
 };
 
-const { samples, length, at, across, gate, outerBends } = channelKit(channel);
+const { samples, length, at, across, gate, outerBends, dropgate, mine } = channelKit(channel);
 
 /** An octagon island of radius `r` at arc length `s`, `lat` m left of the centerline. */
 function island(s: number, lat: number, r: number, turn = 0.4): Box {
@@ -68,6 +68,8 @@ const level: LevelData = {
   ],
   checkpoints: [gate(130), gate(268), gate(length - 6)],
   hazards: [
+    // The cemetery gate drops across the way in: wait for it to slam, then dash under it.
+    dropgate("dropgate-1", 25, { period: 6.5, phase: 3 }),
     // Two pumpkins guard the stone garden: the way through is the gap between them.
     bumper("bumper-1", 96, -7, 2),
     bumper("bumper-2", 96, 7, 2, 1.5, Math.PI),
@@ -80,7 +82,15 @@ const level: LevelData = {
     // Another pair in the last bend, with a gap wider than the raft.
     bumper("bumper-3", 318, -7, 2.4),
     bumper("bumper-4", 318, 7, 2.4, 1.5, Math.PI / 2),
+    // Past the crypt the gate drops again, faster.
+    dropgate("dropgate-2", 282, { period: 5.5, down: 0.6, rise: 1.2, phase: 2 }),
     log("log-3", 352, 7, 0.6, 1),
+    // Mines float in the last pool before the rapids: two still, two drifting across. The still
+    // ones sit toward the banks, off the racing line, so the drifting ones are what to time.
+    mine("mine-1", 384, 7.5),
+    mine("mine-2", 390, -5),
+    mine("mine-3", 398, 0, 1, { range: 6, speed: 0.5 }),
+    mine("mine-4", 398, 9, 0.9, { range: 2, speed: 0.8, phase: 1 }),
   ],
 };
 

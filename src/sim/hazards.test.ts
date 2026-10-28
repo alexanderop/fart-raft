@@ -5,6 +5,9 @@ import {
   BUMPER_PULSE,
   COUNTDOWN_TICKS,
   crewZones,
+  DIFFICULTY,
+  hazardRate,
+  DROPGATE_PERIOD,
   HAMMER_ARM,
   INVULNERABLE_TICKS,
   RESPAWN_TICKS,
@@ -13,14 +16,21 @@ import {
   PISTON_HOLD,
   PISTON_REST,
   TICK_RATE,
+  WALK_SPEED,
+  walkSpeed,
 } from "./constants.ts";
 import {
   bumperRadius,
+  dropgateDown,
+  dropgateLift,
+  dropgateShake,
   hammerDown,
   hammerLift,
   hammerPivot,
   hazardBoxes,
+  hazardTime,
   logCenter,
+  mineCenter,
   pistonCenter,
   pistonOut,
 } from "./hazards/shape.ts";
@@ -30,6 +40,7 @@ import { levelWalls } from "./channel.ts";
 import { createSim, initPhysics, snapshot, step } from "./sim.ts";
 import {
   IDLE_INPUT,
+  type Difficulty,
   type HazardDef,
   type LevelData,
   type SeatInput,
@@ -37,6 +48,8 @@ import {
 } from "./types.ts";
 
 const FULL = crewZones(4);
+/** The hazard tests below pin today's full-speed tuning; "given a difficulty" covers chill. */
+const WILD = { difficulty: "wild" } as const;
 const fart: SeatInput = { move: { x: 0, y: 0 }, fart: true };
 const rearFart: SeatInput[] = [fart, fart, IDLE_INPUT, IDLE_INPUT];
 const idle: SeatInput[] = FULL.map(() => IDLE_INPUT);
@@ -82,7 +95,7 @@ type Hit = { tick: number; event: Extract<SimEvent, { type: "hit" }> };
  * more ticks. Returns the hit and the raft's velocity, spin and position right after it.
  */
 function firstHit(level: LevelData, inputs: SeatInput[] = rearFart, after = 0) {
-  const sim = createSim(level, FULL);
+  const sim = createSim(level, FULL, WILD);
   let hit: Hit | undefined;
   for (let t = 0; t < COUNTDOWN_TICKS + 15 * TICK_RATE && !hit; t++) {
     for (const event of step(sim, inputs)) if (event.type === "hit") hit = { tick: t, event };
@@ -193,7 +206,7 @@ describe("given a rolling log", () => {
 
   describe("when time passes", () => {
     it("should run back and forth across its axis on a fixed schedule", () => {
-      const sim = createSim(pond(log), FULL);
+      const sim = createSim(pond(log), FULL, WILD);
       const at: { x: number; y: number; rot: number }[] = [];
       for (let t = 0; t < 8 * TICK_RATE; t++) {
         step(sim, idle);
@@ -207,7 +220,7 @@ describe("given a rolling log", () => {
     });
 
     it("should be where the shared schedule says", () => {
-      const sim = createSim(pond(log), FULL);
+      const sim = createSim(pond(log), FULL, WILD);
       for (let t = 0; t < 200; t++) step(sim, idle);
       const { x, y } = snapshot(sim).hazards[0]!;
       const expected = logCenter(log, 200 / TICK_RATE);
@@ -219,7 +232,7 @@ describe("given a rolling log", () => {
   describe("when it rolls into a raft that is waiting in its way", () => {
     it("should wipe the crew out and throw the raft away from the log", () => {
       // Phased so the log is at the far side of its run when the race starts, then rolls in.
-      const sim = createSim(pond({ ...log, x: 6, range: 8, phase: -3 }), FULL);
+      const sim = createSim(pond({ ...log, x: 6, range: 8, phase: -3 }), FULL, WILD);
       const lost: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 12 * TICK_RATE; t++)
         lost.push(...step(sim, idle).filter((e) => e.type === "hit"));
@@ -253,7 +266,7 @@ describe("given a pumpkin bumper", () => {
     });
 
     it("should stay where it floats", () => {
-      const sim = createSim(pond(bumper), FULL);
+      const sim = createSim(pond(bumper), FULL, WILD);
       for (let t = 0; t < 120; t++) step(sim, idle);
       const { x, y } = snapshot(sim).hazards[0]!;
       expect([x, y]).toEqual([bumper.x, bumper.y]);
@@ -301,7 +314,7 @@ describe("given an island", () => {
       hazards: [],
       walls: [{ ...island, x: 14, y: 0, rot: 0 }],
     };
-    const sim = createSim(level, FULL);
+    const sim = createSim(level, FULL, WILD);
     for (let t = 0; t < COUNTDOWN_TICKS + 8 * TICK_RATE; t++) step(sim, rearFart);
     const { raft } = snapshot(sim);
     // The octagon's flat side is at x = 14 − 3; the raft's hull is 2.9 m. It touches near 8.1.
@@ -354,7 +367,7 @@ describe("given a hammer", () => {
   describe("when the raft waits under it", () => {
     it("should be safe while the hammer is up and wiped out when it slams", () => {
       // The raft sits on the smash zone from the start; nobody farts.
-      const sim = createSim({ ...pond(hammer), spawn: { x: 12, y: 0, rot: 0 } }, FULL);
+      const sim = createSim({ ...pond(hammer), spawn: { x: 12, y: 0, rot: 0 } }, FULL, WILD);
       const hits: number[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 2 * period * TICK_RATE; t++)
         for (const e of step(sim, idle)) if (e.type === "hit") hits.push((t + 1) / TICK_RATE);
@@ -391,7 +404,7 @@ describe("given a piston", () => {
     });
 
     it("should be where the shared schedule says", () => {
-      const sim = createSim(pond(piston), FULL);
+      const sim = createSim(pond(piston), FULL, WILD);
       for (let t = 0; t < 150; t++) step(sim, idle);
       const { x, y } = snapshot(sim).hazards[0]!;
       const expected = pistonCenter(piston, 150 / TICK_RATE);
@@ -422,5 +435,277 @@ describe("given a cross", () => {
   it("should wipe out a raft that rams either bar", () => {
     // The raft rams the bar along its own axis: only the second, square bar is in its way.
     expect(firstHit(pond({ ...cross, rot: 0 })).hit.event.dirX).toBeLessThan(-0.9);
+  });
+});
+
+/** The k-th of 400 instants through a default drop gate's cycle, s. */
+const gateTime = (k: number) => (k / 400) * DROPGATE_PERIOD;
+
+describe("given a drop gate", () => {
+  // A bar across the raft's way at x = 12, from y = -7 to 7.
+  const dropgate: HazardDef = {
+    id: "dropgate",
+    kind: "dropgate",
+    speed: 0,
+    x: 12,
+    y: 0,
+    rot: Math.PI / 2,
+    hx: 7,
+    hy: 0.6,
+  };
+  const period = DROPGATE_PERIOD;
+
+  describe("when time passes", () => {
+    it("should hang up high, shake, slam down once a cycle, and rise again", () => {
+      const lifts = Array.from({ length: 400 }, (_, k) => dropgateLift(dropgate, gateTime(k)));
+      expect(lifts[0]).toBe(1);
+      expect(Math.min(...lifts)).toBe(0);
+      const down = lifts.map((_, k) => dropgateDown(dropgate, gateTime(k)));
+      expect(down.filter((d, k) => d && !down[k - 1]).length).toBe(1);
+      expect(down.filter(Boolean).length / down.length).toBeLessThan(0.3);
+      // It shakes only just before it slams.
+      const firstDown = down.indexOf(true);
+      const shakes = lifts.map((_, k) => dropgateShake(dropgate, gateTime(k)) > 0);
+      expect(shakes.indexOf(true)).toBeGreaterThan(firstDown - 50);
+      expect(shakes.indexOf(true)).toBeLessThan(firstDown);
+    });
+
+    it("should take its own period, rest and rise times", () => {
+      const slow = { ...dropgate, period: 10, down: 2, rise: 3 };
+      const down = Array.from({ length: 1000 }, (_, k) => dropgateLift(slow, k / 100) === 0);
+      expect(down.filter(Boolean).length).toBeGreaterThanOrEqual(199);
+      expect(down.filter(Boolean).length).toBeLessThanOrEqual(201);
+    });
+
+    it("should fill the channel only while down", () => {
+      const up = hazardBoxes(dropgate, 0)[0]!;
+      expect(Math.hypot(up.x - dropgate.x, up.y - dropgate.y)).toBeGreaterThan(1000);
+      const downAt = period * 0.75;
+      expect(dropgateDown(dropgate, downAt)).toBe(true);
+      expect(hazardBoxes(dropgate, downAt)[0]).toMatchObject({ x: 12, y: 0, hx: 7, hy: 0.6 });
+    });
+  });
+
+  describe("when the raft waits under it", () => {
+    it("should be safe while the bar is up and wiped out when it slams", () => {
+      const sim = createSim({ ...pond(dropgate), spawn: { x: 12, y: 0, rot: 0 } }, FULL, WILD);
+      const hits: number[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 2 * period * TICK_RATE; t++)
+        for (const e of step(sim, idle)) if (e.type === "hit") hits.push((t + 1) / TICK_RATE);
+      expect(hits.length).toBeGreaterThanOrEqual(1);
+      for (const at of hits) expect(dropgateDown(dropgate, at)).toBe(true);
+    });
+  });
+
+  describe("when the raft drives under it while it is up", () => {
+    it("should let the raft pass", () => {
+      // Phased so the bar stays up for the whole run: it next slams long after the raft is through.
+      const late = { ...dropgate, period: 30, phase: 0.6 };
+      const sim = createSim(pond(late), FULL, WILD);
+      const events: SimEvent[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
+      expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
+      expect(snapshot(sim).raft.x).toBeGreaterThan(dropgate.x + 4);
+    });
+  });
+});
+
+describe("given a mine", () => {
+  const mine: HazardDef = {
+    id: "mine",
+    kind: "mine",
+    speed: 0,
+    x: 12,
+    y: 0,
+    rot: 0,
+    hx: 0.9,
+    hy: 0.9,
+  };
+  // Drifts 3 m either side of (12, 6), across the raft's way.
+  const drifting: HazardDef = { ...mine, y: 6, rot: Math.PI / 2, range: 3, speed: 0.8, phase: 1 };
+
+  describe("when the raft rams it", () => {
+    it("should wipe the crew out and throw the raft back", () => {
+      const { hit } = firstHit(pond(mine));
+      expect(hit.event.dirX).toBeLessThan(-0.9);
+    });
+  });
+
+  describe("when it drifts", () => {
+    it("should be a pure function of time, along its axis and within its range", () => {
+      const period = (2 * Math.PI) / drifting.speed;
+      for (const t of [0, 1.3, 4.7, 11]) {
+        const p = mineCenter(drifting, t);
+        expect(mineCenter(drifting, t)).toEqual(p);
+        expect(mineCenter(drifting, t + period).y).toBeCloseTo(p.y, 6);
+        expect(p.x).toBeCloseTo(12, 6);
+        expect(Math.abs(p.y - 6)).toBeLessThanOrEqual(3 + 1e-9);
+      }
+      expect(mineCenter(mine, 5)).toEqual({ x: 12, y: 0 });
+    });
+
+    it("should be where the shared schedule says, inside the box the bots keep clear of", () => {
+      const sim = createSim(pond(drifting), FULL, WILD);
+      for (let t = 0; t < 150; t++) step(sim, idle);
+      const { x, y } = snapshot(sim).hazards[0]!;
+      const expected = mineCenter(drifting, 150 / TICK_RATE);
+      expect(x).toBeCloseTo(expected.x, 2);
+      expect(y).toBeCloseTo(expected.y, 2);
+      expect(hazardBoxes(drifting, 150 / TICK_RATE)[0]).toMatchObject({ hx: 0.9, hy: 0.9 });
+    });
+  });
+
+  describe("when the course JSON describes one", () => {
+    it("should parse, and reject a drop gate with a period that is not positive", () => {
+      const level = { ...pond(drifting), hazards: [drifting, { ...mine, kind: "dropgate" }] };
+      expect(parseLevel(level).hazards).toHaveLength(2);
+      const bad = { ...level, hazards: [{ ...mine, kind: "dropgate", period: 0 }] };
+      expect(() => parseLevel(bad)).toThrow(/hazards/);
+    });
+  });
+});
+
+const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/** Run a pond with `hazard` for `ticks` while the crew wobbles about, and return the snapshot. */
+const runFor = (hazard: HazardDef, ticks: number, difficulty?: Difficulty) => {
+  const sim = createSim(pond(hazard), FULL, difficulty && { difficulty });
+  for (let t = 0; t < ticks; t++)
+    step(
+      sim,
+      FULL.map((_, i) => ({
+        move: { x: Math.cos(t / 20 + i), y: Math.sin(t / 30) },
+        fart: (t + i * 7) % 40 < 25,
+      })),
+    );
+  const snap = snapshot(sim);
+  sim.world.free();
+  return snap;
+};
+
+/** How far (radians) rider 0 walks round the ring in half a second. */
+const walked = (d: Difficulty, crew: number) => {
+  const zones = crewZones(crew);
+  const sim = createSim(pond(bar), zones, { difficulty: d });
+  const start = snapshot(sim).riders[0]!;
+  // Stick toward +y: rider 0 (rear, or rear-left) slides along the ring.
+  for (let t = 0; t < 30; t++)
+    step(
+      sim,
+      zones.map(() => ({ move: { x: 0, y: 1 }, fart: false })),
+    );
+  const end = snapshot(sim).riders[0]!;
+  sim.world.free();
+  return Math.abs(wrapAngle(Math.atan2(end.y, end.x) - Math.atan2(start.y, start.x)));
+};
+
+describe("given a difficulty", () => {
+  const spinner: HazardDef = { ...bar, id: "spin", kind: "spinner", speed: 2, x: 30 };
+  describe("when none is picked", () => {
+    it("should play chill", () => {
+      expect(runFor(spinner, 1).difficulty).toBe("chill");
+    });
+  });
+
+  describe("when the same tick is reached in chill and in wild", () => {
+    const ticks = 60; // under half a turn either way, so the wrapped angle is the whole turn
+    const turned = (def: HazardDef, d: Difficulty) =>
+      wrapAngle(runFor(def, ticks, d).hazards[0]!.rot - def.rot);
+
+    it("should have turned the chill spinner by its own, slower hazard rate of the wild one", () => {
+      expect(turned(spinner, "wild")).toBeCloseTo(spinner.speed * (ticks / TICK_RATE));
+      expect(turned(spinner, "chill") / turned(spinner, "wild")).toBeCloseTo(
+        hazardRate("chill", "spinner"),
+      );
+      expect(hazardRate("chill", "spinner")).toBe(0.5);
+      expect(hazardRate("chill", "spinner")).toBeLessThan(DIFFICULTY.chill.hazardRate);
+      expect(hazardRate("wild", "spinner")).toBe(1);
+    });
+
+    it("should slow a chill cross like a spinner", () => {
+      const cross: HazardDef = { ...spinner, id: "cross", kind: "cross" };
+      expect(turned(cross, "chill") / turned(cross, "wild")).toBeCloseTo(
+        hazardRate("chill", "spinner"),
+      );
+    });
+
+    it("should keep every other chill hazard on the difficulty's hazard rate", () => {
+      expect(hazardRate("chill", "log")).toBe(DIFFICULTY.chill.hazardRate);
+      expect(DIFFICULTY.chill.hazardRate).toBeLessThan(1);
+    });
+
+    it.each(["chill", "wild"] as const)(
+      "should turn a %s spinner body exactly where hazardTime says it is",
+      (d) => {
+        const snap = runFor(spinner, ticks, d);
+        const [box] = hazardBoxes(spinner, hazardTime(d, snap.tick, "spinner"));
+        expect(wrapAngle(snap.hazards[0]!.rot - box!.rot)).toBeCloseTo(0, 4);
+      },
+    );
+
+    it.each(["chill", "wild"] as const)(
+      "should put a %s log body exactly where hazardTime says it is",
+      (d) => {
+        const log: HazardDef = {
+          ...bar,
+          id: "log",
+          kind: "log",
+          speed: 1,
+          range: 6,
+          x: 30,
+          hx: 2.4,
+          hy: 1,
+        };
+        const snap = runFor(log, 200, d);
+        const [box] = hazardBoxes(log, hazardTime(d, snap.tick, "log"));
+        expect(snap.hazards[0]!.x).toBeCloseTo(box!.x, 4);
+        expect(snap.hazards[0]!.y).toBeCloseTo(box!.y, 4);
+      },
+    );
+  });
+
+  describe.each(["chill", "wild"] as const)("when a %s race is run twice", (d) => {
+    it("should end in the identical snapshot", () => {
+      const wobbly: LevelData = { ...pond(spinner), hazards: [spinner, { ...bumper, x: 18 }] };
+      const once = () => {
+        const sim = createSim(wobbly, FULL, { difficulty: d });
+        for (let t = 0; t < COUNTDOWN_TICKS + 4 * TICK_RATE; t++) step(sim, rearFart);
+        const snap = snapshot(sim);
+        sim.world.free();
+        return snap;
+      };
+      expect(once()).toEqual(once());
+    });
+  });
+
+  describe("when a rider walks the ring for half a second", () => {
+    it("should go at WALK_SPEED in wild and faster in chill, fastest alone", () => {
+      expect(walkSpeed("wild", 1)).toBe(WALK_SPEED);
+      expect(walkSpeed("wild", 4)).toBe(WALK_SPEED);
+      expect(walkSpeed("chill", 4)).toBeGreaterThan(WALK_SPEED);
+      expect(walkSpeed("chill", 1)).toBeGreaterThan(walkSpeed("chill", 4));
+      expect(walked("chill", 1)).toBeGreaterThan(1.5 * walked("wild", 1));
+    });
+  });
+
+  describe("when a chill crew wipes out", () => {
+    it("should respawn sooner and stay safe longer than a wild one", () => {
+      const sim = createSim(pond(bar), FULL);
+      let hit = false;
+      for (let t = 0; t < COUNTDOWN_TICKS + 15 * TICK_RATE && !hit; t++)
+        hit = step(sim, rearFart).some((e) => e.type === "hit");
+      expect(hit).toBe(true);
+      const { respawnTicks, invulnerableTicks } = DIFFICULTY.chill;
+      expect(respawnTicks).toBeLessThan(RESPAWN_TICKS);
+      expect(invulnerableTicks).toBeGreaterThan(INVULNERABLE_TICKS);
+      expect(snapshot(sim).respawnIn).toBe(respawnTicks);
+      for (let t = 0; t < respawnTicks; t++) step(sim, idle);
+      expect(snapshot(sim).invulnerable).toBe(invulnerableTicks);
+      // Farting straight back into the bar through the whole grace window never wipes it out.
+      const events: SimEvent[] = [];
+      for (let t = 0; t < invulnerableTicks - 1; t++) events.push(...step(sim, rearFart));
+      expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
+      sim.world.free();
+    });
   });
 });

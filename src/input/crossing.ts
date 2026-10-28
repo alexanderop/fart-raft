@@ -1,6 +1,6 @@
 import { levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
-import { RAFT_HULL, STEP } from "../sim/constants.ts";
-import { hazardBoxes, hazardReach } from "../sim/hazards/shape.ts";
+import { hazardRate, RAFT_HULL } from "../sim/constants.ts";
+import { hazardBoxes, hazardReach, hazardTime } from "../sim/hazards/shape.ts";
 import type { Box, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
 import { distToBox } from "./geometry.ts";
 
@@ -158,8 +158,6 @@ export function planCrossing(
   keep: { lat: number; pace: number; holdFor: number } | null = null,
 ): Crossing | null {
   const me = frame.locate(snap.raft);
-  const now = snap.tick * STEP;
-
   const zones = level.hazards.map((def) => {
     const half = hazardReach(def) + RAFT_HULL + MARGIN;
     return { def, at: frame.locate(def).s - me.s, half };
@@ -194,8 +192,16 @@ export function planCrossing(
   // The hazard at every step of a simulated crossing, on time, early and late.
   const steps = Math.ceil(HORIZON / DT) + 1;
   const slips = [0, -SLIP, SLIP];
+  // Each hazard's time now, and how much of it passes per real second of the crossing.
+  const clocks = group.map((g) => ({
+    def: g.def,
+    now: hazardTime(snap.difficulty, snap.tick, g.def.kind),
+    rate: hazardRate(snap.difficulty, g.def.kind),
+  }));
   const boxes = Array.from({ length: steps }, (_, k) =>
-    group.flatMap((g) => slips.flatMap((slip) => hazardBoxes(g.def, now + k * DT + slip))),
+    clocks.flatMap(({ def, now, rate }) =>
+      slips.flatMap((slip) => hazardBoxes(def, now + (k * DT + slip) * rate)),
+    ),
   );
 
   // The centerline sampled every CELL metres from BEHIND metres back, so a candidate path is a

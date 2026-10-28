@@ -21,6 +21,7 @@ import { crewZones, MAX_CREW, TICK_RATE } from "../src/sim/constants.ts";
 import { createSim, snapshot, step } from "../src/sim/sim.ts";
 import {
   IDLE_INPUT,
+  type Difficulty,
   type LevelData,
   type SeatInput,
   type SimEvent,
@@ -64,8 +65,8 @@ export interface Room {
 }
 
 /** One race: the sim, the riders it was started with, and the events not yet broadcast. Effect-free. */
-function newRace(level: LevelData, crew: readonly Rider[]) {
-  const sim = createSim(level, crewZones(crew.length));
+function newRace(level: LevelData, difficulty: Difficulty, crew: readonly Rider[]) {
+  const sim = createSim(level, crewZones(crew.length), { difficulty });
   let pending: SimEvent[] = [];
 
   return {
@@ -117,6 +118,7 @@ export const makeRoom = (
   code: string,
   course: CourseName,
   level: LevelData,
+  difficulty: Difficulty,
 ): Effect.Effect<Room, never, Scope.Scope> =>
   Effect.gen(function* () {
     // No bots online: a race's crew is exactly the humans seated when it starts.
@@ -128,6 +130,7 @@ export const makeRoom = (
     const rosterOf = (table: readonly Seat[], current: Race | undefined): Roster => ({
       code,
       course,
+      difficulty,
       seats: table.map((s) => (s.kind === "human" ? s.name : null)),
       host: hostOf(table),
       started: current !== undefined,
@@ -211,7 +214,7 @@ export const makeRoom = (
       const host = hostOf(table);
       if (host === null || seatOf(table, token) !== host) return;
       if ((yield* Ref.get(race)) !== undefined) return;
-      yield* Ref.set(race, newRace(level, crewOf(table)));
+      yield* Ref.set(race, newRace(level, difficulty, crewOf(table)));
       yield* publishRoster;
     });
 
@@ -220,7 +223,7 @@ export const makeRoom = (
       if (seatOf(table, token) < 0) return;
       const old = yield* Ref.get(race);
       if (!old) return;
-      yield* Ref.set(race, newRace(level, crewOf(table)));
+      yield* Ref.set(race, newRace(level, difficulty, crewOf(table)));
       old.free();
       yield* publishRoster;
     });

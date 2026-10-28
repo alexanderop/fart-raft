@@ -53,23 +53,27 @@ export function createConfetti(scene: THREE.Scene) {
   const dummy = new THREE.Object3D();
 
   return {
-    /** Shoot a fan of confetti from a point; `spread` is the sim-space offset along the gate. */
+    /**
+     * Two fountains of confetti from the ends of a gate's sign (center x, y at height h, long axis
+     * ax, ay, half-width half). They shoot up and out toward the banks, never across the channel,
+     * so the shower frames the raft passing under the gate instead of falling between it and the camera.
+     */
     burst(x: number, y: number, h: number, ax: number, ay: number, half: number, count = 90) {
       for (let n = 0; n < count; n++) {
         const slot = next;
         const p = pieces[slot]!;
         next = (next + 1) % CAPACITY;
-        const along = rand(-half * 0.85, half * 0.85);
-        const out = rand(-1, 1);
+        const side = n % 2 ? 1 : -1;
+        const along = side * half * rand(0.55, 0.95);
+        const across = rand(-0.4, 0.4);
         p.age = 0;
-        p.life = rand(2.2, 3.4);
+        p.life = rand(2, 3);
         p.x = x + ax * along;
         p.y = y + ay * along;
-        p.h = h + rand(-0.2, 0.3);
-        // Mostly up, a little sideways and forward/back.
-        p.vx = ax * rand(-2, 2) - ay * out * 3;
-        p.vy = ay * rand(-2, 2) + ax * out * 3;
-        p.vh = rand(5, 10);
+        p.h = h + rand(-0.2, 0.5);
+        p.vx = ax * side * rand(1.5, 4.5) - ay * across;
+        p.vy = ay * side * rand(1.5, 4.5) + ax * across;
+        p.vh = rand(6, 11);
         p.spin = [rand(-9, 9), rand(-9, 9), rand(-9, 9)];
         p.flutter = rand(6, 12);
         p.seed = rand(0, 6.28);

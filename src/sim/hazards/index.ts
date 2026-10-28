@@ -1,8 +1,10 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
 import type { HazardDef } from "../types.ts";
 import { createBumper } from "./bumper.ts";
+import { createDropgate } from "./dropgate.ts";
 import { createHammer } from "./hammer.ts";
 import { createLog } from "./log.ts";
+import { createMine } from "./mine.ts";
 import { createPiston } from "./piston.ts";
 import { createSpinner } from "./spinner.ts";
 import { createSweeper } from "./sweeper.ts";
@@ -30,6 +32,8 @@ const KINDS: Record<HazardDef["kind"], (world: RAPIER.World, def: HazardDef) => 
   bumper: createBumper,
   hammer: createHammer,
   piston: createPiston,
+  dropgate: createDropgate,
+  mine: createMine,
 };
 
 export function createHazard(world: RAPIER.World, def: HazardDef): Hazard {

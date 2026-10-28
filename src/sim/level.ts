@@ -52,6 +52,8 @@ const HAZARD_KINDS: readonly string[] = [
   "bumper",
   "hammer",
   "piston",
+  "dropgate",
+  "mine",
 ] satisfies HazardDef["kind"][];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -70,6 +72,10 @@ const isHazard = (v: unknown): v is HazardDef =>
   hasNums(v, [...BOX_KEYS, "speed"]) &&
   isOptionalNum(v.range) &&
   isOptionalNum(v.phase) &&
+  isOptionalNum(v.period) &&
+  (typeof v.period !== "number" || v.period > 0) &&
+  isOptionalNum(v.down) &&
+  isOptionalNum(v.rise) &&
   typeof v.id === "string" &&
   typeof v.kind === "string" &&
   HAZARD_KINDS.includes(v.kind);

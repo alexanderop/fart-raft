@@ -1130,3 +1130,224 @@ button {
     top: calc(48px + var(--safe-t));
   }
 }
+
+/* ── Volume ─────────────────────────────────────────────────────────────── */
+
+.vol {
+  display: grid;
+  gap: 4px;
+  color: var(--outline);
+  font-weight: 800;
+}
+
+.vol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vol-mix[hidden] {
+  display: none;
+}
+
+.vol-mix {
+  display: grid;
+  gap: 4px;
+  padding-left: 52px;
+}
+
+.vol-slider {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.vol-slider span {
+  flex: none;
+  width: 4.2em;
+}
+
+.vol-mute,
+.vol-more,
+.vol-toggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 3px solid var(--outline);
+  border-radius: 14px;
+  background: #eef7fd;
+  color: var(--outline);
+  font: inherit;
+  font-weight: 900;
+  box-shadow: 0 4px 0 var(--outline);
+  cursor: pointer;
+  transition:
+    translate 0.1s,
+    box-shadow 0.1s;
+}
+
+.vol-more {
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.vol-mute svg,
+.vol-toggle svg {
+  width: 26px;
+  height: 26px;
+}
+
+.vol.is-muted .vol-mute {
+  background: #ffd6d6;
+}
+
+.vol-mute:active,
+.vol-more:active,
+.vol-toggle:active {
+  translate: 0 3px;
+  box-shadow: 0 1px 0 var(--outline);
+}
+
+.vol-mute:focus-visible,
+.vol-more:focus-visible,
+.vol-toggle:focus-visible {
+  outline: 3px solid #ffb347;
+  outline-offset: 3px;
+}
+
+.vol input[type="range"] {
+  --fill: 80%;
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.vol input[type="range"]::-webkit-slider-runnable-track {
+  height: 16px;
+  border: 3px solid var(--outline);
+  border-radius: 10px;
+  background: linear-gradient(to right, var(--gas) var(--fill), #eef7fd var(--fill));
+}
+
+.vol input[type="range"]::-webkit-slider-thumb {
+  width: 28px;
+  height: 28px;
+  margin-top: -9px;
+  border: 3px solid var(--outline);
+  border-radius: 50%;
+  background: #ffe45c;
+  box-shadow: 0 3px 0 var(--outline);
+  -webkit-appearance: none;
+}
+
+.vol input[type="range"]::-moz-range-track {
+  height: 10px;
+  border: 3px solid var(--outline);
+  border-radius: 10px;
+  background: linear-gradient(to right, var(--gas) var(--fill), #eef7fd var(--fill));
+}
+
+.vol input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--outline);
+  border-radius: 50%;
+  background: #ffe45c;
+  box-shadow: 0 3px 0 var(--outline);
+}
+
+.vol input[type="range"]:focus-visible {
+  outline: 3px solid #ffb347;
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.vol.is-muted input[data-ch="master"]::-webkit-slider-runnable-track {
+  background: #e3e0ea;
+}
+
+.vol.is-muted input[data-ch="master"]::-moz-range-track {
+  background: #e3e0ea;
+}
+
+.menu-volume {
+  margin-top: 14px;
+}
+
+/* In the race: under the puff counter, above the touch layer (z 5), below menus (z 10). */
+.vol-hud {
+  position: fixed;
+  top: calc(56px + var(--safe-t));
+  right: calc(12px + var(--safe-r));
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  touch-action: manipulation;
+}
+
+.vol-toggle {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: #2b3441;
+  color: #fff;
+}
+
+.vol-toggle[data-level="muted"] {
+  color: #ff8a8a;
+}
+
+.vol-pop[hidden] {
+  display: none;
+}
+
+.vol-pop {
+  width: min(300px, calc(100vw - 24px - var(--safe-l) - var(--safe-r)));
+  padding: 12px;
+  border: 3px solid var(--outline);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 6px 0 var(--outline);
+  animation: vol-in 0.18s both;
+}
+
+@keyframes vol-in {
+  from {
+    opacity: 0;
+    scale: 0.85;
+    translate: 0 -8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vol-pop {
+    animation: none;
+  }
+}
+
+/* Landscape phones: open sideways so the popover stays clear of the FART button. */
+@media (max-height: 480px) {
+  .vol-hud {
+    top: calc(48px + var(--safe-t));
+    flex-direction: row-reverse;
+    align-items: flex-start;
+  }
+
+  .vol-pop {
+    width: min(300px, calc(100vw - 92px - var(--safe-l) - var(--safe-r)));
+  }
+}

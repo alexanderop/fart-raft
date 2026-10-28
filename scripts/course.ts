@@ -2,7 +2,16 @@
 // length along the centerline, so moving a control point keeps every gate square to the stream.
 import { writeFileSync } from "node:fs";
 import { pointAt, sampleChannel, type Sample } from "../src/sim/channel.ts";
-import type { Box, Channel, LevelData, Span } from "../src/sim/types.ts";
+import type { Box, Channel, HazardDef, LevelData, Span } from "../src/sim/types.ts";
+
+/** A drop gate's timing (see HazardDef): seconds per cycle, down and rising, and its phase (rad). */
+export type DropgateTiming = { period?: number; down?: number; rise?: number; phase?: number };
+
+/**
+ * A drifting mine: `range` m either side of its spot at `speed` rad/s, across the channel, or
+ * up and down it when `along` is set.
+ */
+export type MineDrift = { range: number; speed: number; phase?: number; along?: boolean };
 
 export type ChannelKit = {
   samples: Sample[];
@@ -15,6 +24,10 @@ export type ChannelKit = {
   gate: (s: number) => Box;
   /** Spiked spans along the outer bank of every bend sharper than `minTurn`, at least `minLength` m long. */
   outerBends: (minTurn: number, minLength?: number) => Span[];
+  /** A drop gate's bar spanning the channel, bank to bank, at arc length `s`. */
+  dropgate: (id: string, s: number, timing?: DropgateTiming) => HazardDef;
+  /** A mine of radius `r` at arc length `s`, `lat` m left of center, still or drifting across. */
+  mine: (id: string, s: number, lat: number, r?: number, drift?: MineDrift) => HazardDef;
 };
 
 export function channelKit(channel: Channel): ChannelKit {
@@ -43,6 +56,23 @@ export function channelKit(channel: Channel): ChannelKit {
     return spans.filter((sp) => sp.to - sp.from > minLength);
   }
 
+  function dropgate(id: string, s: number, timing: DropgateTiming = {}): HazardDef {
+    const box = across(s, channel.halfWidth, 0.6);
+    return { ...box, rot: box.rot + Math.PI / 2, id, kind: "dropgate", speed: 0, ...timing };
+  }
+
+  function mine(id: string, s: number, lat: number, r = 0.9, drift?: MineDrift): HazardDef {
+    const box = across(s, r, r, lat);
+    return {
+      ...box,
+      rot: drift?.along ? box.rot : box.rot + Math.PI / 2,
+      id,
+      kind: "mine",
+      speed: drift?.speed ?? 0,
+      ...(drift && { range: drift.range, phase: drift.phase ?? 0 }),
+    };
+  }
+
   return {
     samples,
     length,
@@ -50,6 +80,8 @@ export function channelKit(channel: Channel): ChannelKit {
     across,
     gate: (s) => across(s, 0.5, channel.halfWidth - 0.3),
     outerBends,
+    dropgate,
+    mine,
   };
 }
 

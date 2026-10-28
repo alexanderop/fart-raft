@@ -1,11 +1,12 @@
 import { RAFT_RADIUS, TICK_RATE } from "../../sim/constants.ts";
 import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import { isSilent, masterLevel, type Volume, type VolumeStore } from "./volume.ts";
 
 // Everything but the fart is synthesized with the Web Audio API. Farts are recorded CC0 clips
 // (public/sounds, see CREDITS.md), with the old synth fart as fallback until they decode. The sim never sees this.
 
-const MUTE_KEY = "fart-raft:muted";
-const MASTER_GAIN = 0.8;
+/** Volume changes glide over about this long (setTargetAtTime time constant, s). */
+const VOLUME_GLIDE = 0.03;
 const MAX_VOICES = 24;
 /** Semitone offset of each seat's fart, so players can tell theirs apart. Seats past the table wrap a whole tone higher. */
 const SEAT_SEMITONES = [0, 5, -4, 3, -2, 7, -6, 1] as const;
@@ -19,22 +20,6 @@ function seatRate(seat: number): number {
 }
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
-
-function readMuted(): boolean {
-  try {
-    return localStorage.getItem(MUTE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeMuted(muted: boolean) {
-  try {
-    localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
-  } catch {
-    // private mode or blocked storage: mute just will not persist
-  }
-}
 
 function noiseBuffer(ctx: AudioContext, seconds: number): AudioBuffer {
   const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
@@ -79,11 +64,18 @@ function envelope(
   return g;
 }
 
-export function createAudio() {
+/**
+ * `volume` owns the player's levels (persisted, shared with the menu and HUD sliders). Farts and
+ * everything else run on separate buses so each has its own slider:
+ * farts → fartBus ┐
+ * sfx, echo, ambience → fxBus ┴→ compressor → master → speakers
+ */
+export function createAudio(volume: VolumeStore) {
   let ctx: AudioContext | null = null;
-  let muted = readMuted();
   let noise: AudioBuffer;
   let sfx: GainNode;
+  let fartBus: GainNode;
+  let fxBus: GainNode;
   let echo: GainNode;
   let master: GainNode;
   let listener = { x: 0, y: 0, heading: 0 };
@@ -105,12 +97,20 @@ export function createAudio() {
     compressor.attack.value = 0.003;
     compressor.release.value = 0.2;
 
+    const v = volume.get();
     master = context.createGain();
-    master.gain.value = muted ? 0 : MASTER_GAIN;
+    master.gain.value = masterLevel(v);
     compressor.connect(master).connect(context.destination);
 
+    fartBus = context.createGain();
+    fartBus.gain.value = v.farts;
+    fartBus.connect(compressor);
+    fxBus = context.createGain();
+    fxBus.gain.value = v.effects;
+    fxBus.connect(compressor);
+
     sfx = context.createGain();
-    sfx.connect(compressor);
+    sfx.connect(fxBus);
 
     // Feedback delay: the spooky tail on chimes.
     const delay = context.createDelay(1);
@@ -123,9 +123,9 @@ export function createAudio() {
     echo = context.createGain();
     echo.connect(delay);
     delay.connect(tone).connect(feedback).connect(delay);
-    tone.connect(compressor);
+    tone.connect(fxBus);
 
-    startAmbience(context, compressor);
+    startAmbience(context, fxBus);
     loadClips(context);
   }
 
@@ -243,6 +243,14 @@ export function createAudio() {
   for (const g of gestures) addEventListener(g, onGesture, true);
   if (navigator.userActivation?.hasBeenActive) ensureContext();
 
+  volume.subscribe((v: Volume) => {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    master.gain.setTargetAtTime(masterLevel(v), t, VOLUME_GLIDE);
+    fartBus.gain.setTargetAtTime(v.farts, t, VOLUME_GLIDE);
+    fxBus.gain.setTargetAtTime(v.effects, t, VOLUME_GLIDE);
+  });
+
   // ── voice helpers ──────────────────────────────────────────────────────
 
   /** Rate limit: `key` may only play once per `gap` seconds, and never beyond MAX_VOICES at once. */
@@ -272,7 +280,7 @@ export function createAudio() {
   function panned(context: AudioContext, pan: number): AudioNode {
     const p = context.createStereoPanner();
     p.pan.value = Math.max(-1, Math.min(1, pan));
-    p.connect(sfx);
+    p.connect(fartBus);
     return p;
   }
 
@@ -518,13 +526,17 @@ export function createAudio() {
         beep(false);
       }
     },
+    /** M key: same as the mute button. Returns whether the game is now silent. */
     toggleMute(): boolean {
-      muted = !muted;
-      writeMuted(muted);
-      if (ctx) master.gain.setTargetAtTime(muted ? 0 : MASTER_GAIN, ctx.currentTime, 0.02);
-      return muted;
+      volume.toggleMute();
+      return isSilent(volume.get());
     },
-    isMuted: () => muted,
+    isMuted: () => isSilent(volume.get()),
+    /** Current node gains (debug: `__audio.gains()`), undefined before the context exists. */
+    gains: () =>
+      ctx
+        ? { master: master.gain.value, farts: fartBus.gain.value, effects: fxBus.gain.value }
+        : undefined,
     /** Decoded fart clips so far (0 means the synth fart plays). */
     clips: () => clips.length,
     /** "none" until the first user gesture creates the context. */

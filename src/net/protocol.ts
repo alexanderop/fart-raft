@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { MAX_CREW } from "../sim/constants.ts";
+import { DIFFICULTIES, MAX_CREW } from "../sim/constants.ts";
 import type * as Sim from "../sim/types.ts";
 
 // Wire schemas for the sim's plain-data types. Shared by the browser and the server, so no DOM
@@ -25,8 +25,13 @@ const Phase = Schema.Union([
   Schema.Struct({ kind: Schema.tag("finished"), timeMs: Num }),
 ]);
 
+/** How hard a race plays: "chill" (slower hazards, more forgiving) or "wild" (full speed). */
+export const Difficulty = Schema.Literals(DIFFICULTIES);
+export const isDifficulty = Schema.is(Difficulty);
+
 export const Snapshot = Schema.Struct({
   tick: Num,
+  difficulty: Difficulty,
   raft: Pose,
   riders: Schema.mutable(Schema.Array(RiderPose)),
   gas: Schema.mutable(Schema.Array(Num)),
@@ -86,6 +91,7 @@ export const CrewMember = Schema.Struct({ name: Schema.String, seat: Schema.Null
 export const Roster = Schema.Struct({
   code: RoomCode,
   course: CourseName,
+  difficulty: Difficulty,
   seats: Schema.mutable(Schema.Array(Schema.NullOr(Schema.String))),
   /** The human who can start the race: whoever has been in the room longest. */
   host: Schema.NullOr(SeatIndex),
@@ -121,7 +127,7 @@ const Seated = { code: RoomCode, token: Schema.String };
 
 export const RaftRpcs = RpcGroup.make(
   Rpc.make("CreateRoom", {
-    payload: { course: CourseName },
+    payload: { course: CourseName, difficulty: Difficulty },
     success: RoomCode,
     error: ServerBusy,
   }),
@@ -149,4 +155,5 @@ export type Drift = [
   Expect<Same<typeof Phase.Type, Sim.Phase>>,
   Expect<Same<typeof Pose.Type, Sim.Pose>>,
   Expect<Same<typeof RiderPose.Type, Sim.RiderPose>>,
+  Expect<Same<typeof Difficulty.Type, Sim.Difficulty>>,
 ];

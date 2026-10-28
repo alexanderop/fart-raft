@@ -5,6 +5,7 @@ import graveyard from "../courses/graveyard.json";
 import pond from "../courses/pond.json";
 import { startLoop } from "./client/loop.ts";
 import { createAudio } from "./client/fx/audio.ts";
+import { createVolumeStore } from "./client/fx/volume.ts";
 import { createCameraShake } from "./client/fx/cameraShake.ts";
 import { createConfetti } from "./client/fx/confetti.ts";
 import { createParticles } from "./client/fx/particles.ts";
@@ -14,6 +15,7 @@ import { gateLayout } from "./client/render/gates.ts";
 import { createScene } from "./client/render/scene.ts";
 import { localSession, onlineSession, type Session } from "./client/session.ts";
 import { createHud, progressTrack } from "./client/ui/hud.ts";
+import { createVolumeButton } from "./client/ui/volume.ts";
 import { showBanner } from "./client/ui/banner.ts";
 import { inviteLink, showOnlineMenu, showRoom, showSpectating } from "./client/ui/lobby.ts";
 import { configToSearch, defaultServerUrl, launchFromUrl, showMenu } from "./client/ui/menu.ts";
@@ -29,6 +31,8 @@ import type { LevelData } from "./sim/types.ts";
 const COURSES: Record<CourseName, unknown> = { canyon, graveyard, pond };
 const app = document.querySelector<HTMLElement>("#app")!;
 const physics = initPhysics();
+/** Player volume, shared by the start menu, the HUD speaker button and the audio graph. */
+const volume = createVolumeStore();
 
 /** The camera's forward direction on the water (sim radians): keys walk riders relative to it. */
 let cameraHeading = 0;
@@ -40,7 +44,7 @@ const showLost = (reason: string) => showBanner(app, `${reason} · Esc for menu`
 async function choose(): Promise<{ level: LevelData; start: () => Promise<Session> }> {
   let launch = launchFromUrl(location.search);
   while (true) {
-    launch ??= await showMenu(app);
+    launch ??= await showMenu(app, volume);
     if (launch.kind === "local") {
       const param = new URLSearchParams(location.search).get("course") ?? "canyon";
       const course = isCourseName(param) ? param : "canyon";
@@ -97,7 +101,7 @@ const particles = createParticles(view.scene);
 const wake = createWake(view.scene);
 const confetti = createConfetti(view.scene);
 const shake = createCameraShake();
-const audio = createAudio();
+const audio = createAudio(volume);
 addEventListener("keydown", (e) => {
   if (e.code === "KeyM" && !e.repeat) audio.toggleMute();
 });
@@ -107,6 +111,7 @@ const hud = createHud(app, {
   camera: view.camera,
   progress: progressTrack(level),
 });
+createVolumeButton(app, volume);
 
 let lastFrame = performance.now();
 const lookDir = new Vector3();

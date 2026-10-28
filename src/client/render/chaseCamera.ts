@@ -36,11 +36,33 @@ const LOOK_AHEAD = 5;
 const SPEED_FOV = 8;
 const FULL_SPEED = 10;
 
-/** Vertical FOV that shows the same horizontal extent as `fov` does at DESIGN_ASPECT. */
-function fitWidth(fov: number, aspect: number): number {
+/**
+ * Portrait screens (taller than wide) show little across, so the camera climbs, backs off and
+ * looks further ahead: the tall screen then shows a long stretch of the channel with the raft low
+ * in the frame. These are the extra metres at a phone held upright (PORTRAIT_FULL or narrower);
+ * a square screen gets none, so landscape framing is untouched.
+ */
+const PORTRAIT_BACK = 4;
+const PORTRAIT_HEIGHT = 7;
+const PORTRAIT_LOOK_AHEAD = 9;
+const PORTRAIT_FULL = 0.6;
+/** In portrait the vertical FOV may open this far, so about 62° stays visible across a phone. */
+const PORTRAIT_MAX_FOV = 105;
+
+/** 0 on a square or landscape screen, 1 on a phone held upright. */
+export const portraitness = (aspect: number): number =>
+  clamp((1 - aspect) / (1 - PORTRAIT_FULL), 0, 1);
+
+/**
+ * Vertical FOV that shows the same horizontal extent as `fov` does at DESIGN_ASPECT, capped so
+ * a tall screen does not bend into a fisheye. Portrait gets a higher cap: the cap is what sets
+ * how much it sees across.
+ */
+export function fitWidth(fov: number, aspect: number): number {
   if (aspect >= DESIGN_ASPECT) return fov;
   const half = Math.atan((Math.tan(THREE.MathUtils.degToRad(fov / 2)) * DESIGN_ASPECT) / aspect);
-  return Math.min(MAX_FOV, THREE.MathUtils.radToDeg(half * 2));
+  const cap = MAX_FOV + (PORTRAIT_MAX_FOV - MAX_FOV) * portraitness(aspect);
+  return Math.min(cap, THREE.MathUtils.radToDeg(half * 2));
 }
 
 export function createChaseCamera(level: LevelData): ChaseCamera {
@@ -76,6 +98,11 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
       lastTick = curr.tick;
       lastPose = pose;
       const speed = Math.hypot(vel.x, vel.y);
+      // Read every frame, so turning the phone reframes at once (the position eases over).
+      const tall = portraitness(camera.aspect);
+      const lookAhead = LOOK_AHEAD + PORTRAIT_LOOK_AHEAD * tall;
+      const back = BACK + PORTRAIT_BACK * tall;
+      const height = HEIGHT + PORTRAIT_HEIGHT * tall;
 
       const h = heading(pose, curr);
       const kDir = snap ? 1 : damp(1.2, dt);
@@ -85,8 +112,8 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
       dir.x /= dl;
       dir.y /= dl;
 
-      const fx = pose.x + dir.x * LOOK_AHEAD + vel.x * 0.25;
-      const fy = pose.y + dir.y * LOOK_AHEAD + vel.y * 0.25;
+      const fx = pose.x + dir.x * lookAhead + vel.x * 0.25;
+      const fy = pose.y + dir.y * lookAhead + vel.y * 0.25;
       if (snap) focus.set(fx, 0, -fy);
       else {
         const k = damp(4, dt);
@@ -95,7 +122,7 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
       }
 
       // Three frame: sim (x, y) → (x, -y).
-      target.set(focus.x - dir.x * BACK, HEIGHT, focus.z + dir.y * BACK);
+      target.set(focus.x - dir.x * back, height, focus.z + dir.y * back);
       if (snap) pos.copy(target);
       else pos.lerp(target, damp(3.5, dt));
 

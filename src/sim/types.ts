@@ -39,8 +39,13 @@ export type Pose = { x: number; y: number; rot: number };
 /** A rider on the deck, in the raft's frame. `face` is where it looks; it farts the other way. */
 export type RiderPose = { x: number; y: number; face: number };
 
+/** How hard the course plays: "chill" slows the hazards and forgives more, "wild" is full speed. */
+export type Difficulty = "chill" | "wild";
+
 export type Snapshot = {
   tick: number;
+  /** The race's difficulty: bots and the renderer derive hazard time from it (`hazardTime`). */
+  difficulty: Difficulty;
   raft: Pose;
   riders: RiderPose[];
   gas: number[];
@@ -72,15 +77,36 @@ export type Vec2 = { x: number; y: number };
  * (`speed` rad/s, `phase` rad) it slams down on the box (x, y, rot, hx, hy) and only hurts there.
  * Piston: a spiked block of half-extents (hx along `rot`, hy) resting in a bank at (x, y); once
  * per cycle it punches `range` m out along `rot`, holds, and slides back.
+ * Dropgate: a spiked bar of half-length `hx` along `rot` (across the channel, bank to bank) and
+ * half-thickness `hy`, hung between two posts. Every `period` s it shakes, slams onto the water,
+ * rests there `down` s and rises over `rise` s; it only hurts while down. `speed` is unused (0).
+ * Mine: a floating spiked mine of radius `hx`, drifting `range` m either side of (x, y) along
+ * `rot` at `speed` rad/s (still without a `range`). Touching it wipes the crew out.
  */
 export type HazardDef = {
   id: string;
-  kind: "spinner" | "cross" | "sweeper" | "log" | "bumper" | "hammer" | "piston";
+  kind:
+    | "spinner"
+    | "cross"
+    | "sweeper"
+    | "log"
+    | "bumper"
+    | "hammer"
+    | "piston"
+    | "dropgate"
+    | "mine";
   speed: number;
-  /** Log: how far its center travels either side of (x, y). Piston: how far it punches out. m. */
+  /**
+   * Log: how far its center travels either side of (x, y). Piston: how far it punches out.
+   * Mine: how far it drifts either side of (x, y). m.
+   */
   range?: number;
-  /** Log, bumper, hammer and piston: where in its cycle the hazard starts, radians. */
+  /** Log, bumper, hammer, piston, dropgate and mine: where in its cycle the hazard starts, radians. */
   phase?: number;
+  /** Dropgate: seconds per cycle, how long it rests down, and how long it takes to rise again. */
+  period?: number;
+  down?: number;
+  rise?: number;
 } & Box;
 
 /** A stretch of spiked bank, by arc length (m) along the channel's centerline. */
