@@ -16,7 +16,13 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/** Further than this (m) between two ticks is a respawn, not motion: draw it as a cut. */
+const TELEPORT = 6;
+
+export const jumped = (a: Pose, b: Pose): boolean => Math.hypot(b.x - a.x, b.y - a.y) > TELEPORT;
+
 export function lerpPose(a: Pose, b: Pose, t: number): Pose {
+  if (jumped(a, b)) return b;
   return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), rot: lerpAngle(a.rot, b.rot, t) };
 }
 

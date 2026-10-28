@@ -1,10 +1,11 @@
 import * as THREE from "three";
-import { TICK_RATE } from "../../sim/constants.ts";
+import { MAX_CREW, TICK_RATE } from "../../sim/constants.ts";
 import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
 import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring.ts";
+import { SEAT_COLORS } from "./zones.ts";
 
 /**
- * Drives the four rider rigs (body → head, arm_l, arm_r) from SimEvents + Snapshots only.
+ * Drives the kit's rider rigs (body → head, arm_l, arm_r) from SimEvents + Snapshots only.
  * Never touches input, so it works the same for local and networked seats.
  */
 export type RiderAnimator = {
@@ -24,7 +25,7 @@ const STAGGER_TIME = 1.6;
 type Rest = { pos: THREE.Vector3; rotY: number };
 
 type Rider = {
-  body: THREE.Object3D | undefined;
+  body: THREE.Object3D;
   head: THREE.Object3D | undefined;
   armL: THREE.Object3D | undefined;
   armR: THREE.Object3D | undefined;
@@ -59,29 +60,61 @@ type Rider = {
   nextBlink: number;
 };
 
-/** The kit ships four riders. Show one per crew seat and hide the rest. */
-function showRiders(raft: THREE.Object3D, crew: number): void {
-  for (let i = 0; ; i++) {
-    const body = raft.getObjectByName(`rider_${i}`);
-    if (!body) return;
-    body.visible = i < crew;
+/**
+ * A copy of `m` with its color turned to `hue`, saturated enough to read (a dusty purple hippo
+ * would otherwise come out grey). Eyes, teeth and trim are grey and stay so.
+ */
+function tinted(m: THREE.Material, hue: number): THREE.Material {
+  const c = m.clone();
+  if ("color" in c && c.color instanceof THREE.Color) {
+    const hsl = c.color.getHSL({ h: 0, s: 0, l: 0 });
+    if (hsl.s > 0.15) c.color.setHSL(hue, Math.max(hsl.s, 0.65), hsl.l);
   }
+  return c;
 }
 
-export function createRiderAnimator(
-  raft: THREE.Object3D,
-  level: LevelData,
-  crew: number,
-): RiderAnimator {
-  showRiders(raft, crew);
-  const riders: Rider[] = Array.from({ length: crew }, (_, i) => {
-    const body = raft.getObjectByName(`rider_${i}`);
+/**
+ * One rider rig per seat, in seat order. The kit ships four animals; seats beyond them ride a
+ * copy of animal `i % kit`, renamed (rider_i, rider_i_head, …) and with its colored materials
+ * turned to the seat's hue, so an eight-crew shows eight distinct riders.
+ */
+function riderBodies(raft: THREE.Object3D): THREE.Object3D[] {
+  const bodies: THREE.Object3D[] = [];
+  for (let body = raft.getObjectByName("rider_0"); body;) {
+    bodies.push(body);
+    body = raft.getObjectByName(`rider_${bodies.length}`);
+  }
+  const kit = bodies.length;
+  if (kit === 0) return bodies;
+  for (let i = kit; i < MAX_CREW; i++) {
+    const from = bodies[i % kit]!;
+    const copy = from.clone(true);
+    const hue = new THREE.Color(SEAT_COLORS[i]).getHSL({ h: 0, s: 0, l: 0 }).h;
+    copy.traverse((o) => {
+      o.name = o.name.replace(`rider_${i % kit}`, `rider_${i}`);
+      if (!(o instanceof THREE.Mesh)) return;
+      o.material = Array.isArray(o.material)
+        ? o.material.map((m: THREE.Material) => tinted(m, hue))
+        : tinted(o.material, hue);
+    });
+    from.parent!.add(copy);
+    bodies.push(copy);
+  }
+  return bodies;
+}
+
+/**
+ * Rigs every kit rider; each frame shows one per rider in the snapshot and hides the rest, so the
+ * crew size can change between races (online restarts).
+ */
+export function createRiderAnimator(raft: THREE.Object3D, level: LevelData): RiderAnimator {
+  const riders: Rider[] = riderBodies(raft).map((body, i) => {
     return {
       body,
-      head: body?.getObjectByName(`rider_${i}_head`),
-      armL: body?.getObjectByName(`rider_${i}_arm_l`),
-      armR: body?.getObjectByName(`rider_${i}_arm_r`),
-      rest: { pos: body?.position.clone() ?? new THREE.Vector3(), rotY: body?.rotation.y ?? 0 },
+      head: body.getObjectByName(`rider_${i}_head`),
+      armL: body.getObjectByName(`rider_${i}_arm_l`),
+      armR: body.getObjectByName(`rider_${i}_arm_r`),
+      rest: { pos: body.position.clone(), rotY: body.rotation.y },
       phase: i * 1.7 + 0.4,
       lastFart: -10,
       exhaust: Math.PI,
@@ -139,7 +172,7 @@ export function createRiderAnimator(
         });
         break;
       }
-      case "lifeLost": {
+      case "hit": {
         if (!lastPose) return;
         // Thrown along (dirX, dirY): the riders lurch the other way, toward the hazard, and flail.
         const local = Math.atan2(e.dirY, e.dirX) - lastPose.rot;
@@ -213,10 +246,10 @@ export function createRiderAnimator(
 
     riders.forEach((r, i) => {
       const { body } = r;
-      if (!body) return;
-      const t = now + r.phase;
       const to = curr.riders[i];
+      body.visible = to !== undefined;
       if (!to) return;
+      const t = now + r.phase;
       const from = prev.riders[i] ?? to;
       const x = from.x + (to.x - from.x) * alpha;
       const y = from.y + (to.y - from.y) * alpha;

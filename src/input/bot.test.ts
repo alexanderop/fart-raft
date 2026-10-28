@@ -16,7 +16,7 @@ function race(level: LevelData, crewSize: number, seconds: number) {
   let snap = snapshot(sim);
   const sources = createSeats(seats.length).map((_, i) => botSource(i, seats, level, () => snap));
   const events: SimEvent[] = [];
-  const over = () => snap.phase.kind === "finished" || snap.phase.kind === "dead";
+  const over = () => snap.phase.kind === "finished";
   for (let t = 0; t < seconds * TICK_RATE && !over(); t++) {
     events.push(...step(sim, readSeats(sources)));
     snap = snapshot(sim);
@@ -24,6 +24,9 @@ function race(level: LevelData, crewSize: number, seconds: number) {
   sim.world.free();
   return { snap, events };
 }
+
+/** Bots plan every crossing, so they should rarely wipe out: a few per race at most. */
+const MAX_WIPEOUTS = 3;
 
 /** A race is up to a few minutes of game time, planned tick by tick: give it real time. */
 const RACE_TIMEOUT = 120_000;
@@ -36,13 +39,14 @@ describe.each([
   ["graveyard", graveyard, 330],
 ] as const)("given the %s course", (_, json, seconds) => {
   const level = parseLevel(json);
-  describe.each([1, 2, 3, 4])("when a crew of %i bots races", (size) => {
+  // 6 and 8 stand in for the big online crews: one raft, so the same courses must stay passable.
+  describe.each([1, 2, 3, 4, 6, 8])("when a crew of %i bots races", (size) => {
     it("should pass every checkpoint and finish", { timeout: RACE_TIMEOUT }, () => {
       const { snap, events } = race(level, size, seconds);
       const passed = events.filter((e) => e.type === "checkpoint").length;
       expect(passed).toBe(level.checkpoints.length - 1);
       expect(snap.phase.kind, `stuck at ${JSON.stringify(snap.raft)}`).toBe("finished");
-      expect(snap.lives).toBeGreaterThan(0);
+      expect(snap.deaths, "wipeouts").toBeLessThanOrEqual(MAX_WIPEOUTS);
     });
   });
 });

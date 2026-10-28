@@ -4,12 +4,16 @@ import { HttpServer } from "effect/http";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vite-plus/test";
 import pond from "../courses/pond.json";
-import { clientLayer, connect, RaftClient } from "../src/net/client.ts";
-import { RoomFull, ServerMsg, type Frame } from "../src/net/protocol.ts";
+import { clientLayer, connect, createRoom, RaftClient } from "../src/net/client.ts";
+import { RoomFull, RoomNotFound, type Frame } from "../src/net/protocol.ts";
+import { MAX_CREW } from "../src/sim/constants.ts";
 import { parseLevel } from "../src/sim/level.ts";
 import { appLayer } from "./app.ts";
 
-const serverLayer = appLayer(parseLevel(pond)).pipe(
+const level = parseLevel(pond);
+/** `n` open seats in a roster. */
+const open = (n: number): null[] => Array(n).fill(null);
+const serverLayer = appLayer({ canyon: level, graveyard: level, pond: level }).pipe(
   Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0 })),
 );
 
@@ -29,62 +33,99 @@ const clientFor = (url: string) =>
   Layer.build(clientLayer(url)).pipe(Effect.map((context) => Context.get(context, RaftClient)));
 
 describe("given the server listening on a free port", () => {
-  describe("when a client joins over a WebSocket", () => {
-    it("should receive Welcome for seat 0, then frames with a rising tick", () =>
+  describe("when a client creates a room and joins it over a WebSocket", () => {
+    it("should receive Welcome for seat 0, then the roster", () =>
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const messages = Array.from(yield* Stream.runCollect(client.Join().pipe(Stream.take(4))));
-
-          expect(messages[0]).toEqual({ _tag: "Welcome", seat: 0, crew: 4 });
-          const frames = messages.filter(ServerMsg.guards.Frame);
-          expect(frames).toHaveLength(3);
-          const [first, second, third] = frames.map((f) => f.snapshot.tick);
-          expect(first! % 3).toBe(0);
-          expect([second! - first!, third! - second!]).toEqual([3, 3]);
-          expect(frames[0]!.seats).toEqual(["human", "bot", "bot", "bot"]);
+          const code = yield* client.CreateRoom({ course: "pond" });
+          const messages = Array.from(
+            yield* Stream.runCollect(client.Join({ code, name: "Ann" }).pipe(Stream.take(2))),
+          );
+          expect(messages[0]).toMatchObject({ _tag: "Welcome", seat: 0 });
+          expect(messages[1]).toMatchObject({
+            _tag: "Roster",
+            roster: {
+              code,
+              course: "pond",
+              seats: ["Ann", ...open(MAX_CREW - 1)],
+              host: 0,
+              crew: [],
+            },
+          });
         }),
       ));
   });
 
-  describe("when a fifth human joins a full room", () => {
+  describe("when a client joins a code nobody created", () => {
+    it("should fail with RoomNotFound across the wire", () =>
+      withServer((url) =>
+        Effect.gen(function* () {
+          const client = yield* clientFor(url);
+          const error = yield* Effect.flip(
+            Stream.runDrain(client.Join({ code: "ZZZZ", name: "" })),
+          );
+          expect(error).toBeInstanceOf(RoomNotFound);
+        }),
+      ));
+  });
+
+  describe("when a ninth human joins a full room", () => {
     it("should fail with RoomFull across the wire", () =>
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const joined = yield* Queue.unbounded<unknown>();
-          for (let i = 0; i < 4; i++) {
-            yield* client.Join().pipe(
+          const code = yield* client.CreateRoom({ course: "pond" });
+          for (let i = 0; i < MAX_CREW; i++) {
+            // One inbox per seat: wait for this join's own Welcome, not an earlier seat's roster.
+            const joined = yield* Queue.unbounded<unknown>();
+            yield* client.Join({ code, name: `P${i}` }).pipe(
               Stream.runForEach((msg) => Queue.offer(joined, msg)),
               Effect.forkScoped,
             );
             yield* Queue.take(joined);
           }
 
-          const error = yield* Effect.flip(Stream.runDrain(client.Join()));
+          const error = yield* Effect.flip(Stream.runDrain(client.Join({ code, name: "Eve" })));
           expect(error).toBeInstanceOf(RoomFull);
         }),
       ));
   });
 
-  describe("when the browser client connects", () => {
-    it("should seat it and deliver frames after a fart input", () =>
+  describe("when two browser clients meet in a room and the host starts", () => {
+    it("should seat both, then deliver frames to the guest", () =>
       withServer((url) =>
         Effect.promise(async () => {
-          const connection = await connect(url);
-          expect(connection.seat).toBe(0);
-          expect(connection.crew).toBe(4);
+          const code = await createRoom(url, "pond");
+          const host = await connect(url, code, "Ann");
+          const guest = await connect(url, code, "Bo");
+          expect([host.seat, guest.seat]).toEqual([0, 1]);
+          expect(guest.roster().seats).toEqual(["Ann", "Bo", ...open(MAX_CREW - 2)]);
+          expect(guest.roster().host).toBe(0);
 
-          const frame = await new Promise<Frame>((resolve) => connection.onFrame(resolve));
+          guest.start();
+          host.start();
+          const frame = await new Promise<Frame>((resolve) => guest.onFrame(resolve));
           expect(frame.snapshot.phase.kind).toBe("countdown");
+          expect(frame.snapshot.riders).toHaveLength(2);
 
-          connection.send({ move: { x: 0, y: 0 }, fart: true });
-          connection.restart();
+          host.send({ move: { x: 0, y: 0 }, fart: true });
+          host.restart();
           const afterRestart = await new Promise<Frame>((resolve) =>
-            connection.onFrame((f) => f.snapshot.tick === 3 && resolve(f)),
+            host.onFrame((f) => f.snapshot.tick === 3 && resolve(f)),
           );
           expect(afterRestart.snapshot.tick).toBe(3);
-          connection.close();
+          host.close();
+          guest.close();
+        }),
+      ));
+  });
+
+  describe("when the browser client joins a missing room", () => {
+    it("should reject with a readable reason", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          await expect(connect(url, "QQQQ", "Ann")).rejects.toThrow("No game with code QQQQ");
         }),
       ));
   });

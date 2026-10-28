@@ -5,13 +5,25 @@ import {
   BUMPER_PULSE,
   COUNTDOWN_TICKS,
   crewZones,
+  HAMMER_ARM,
   INVULNERABLE_TICKS,
+  RESPAWN_TICKS,
   KNOCK_SPEED,
   KNOCK_SPIN,
-  MAX_CREW,
+  PISTON_HOLD,
+  PISTON_REST,
   TICK_RATE,
 } from "./constants.ts";
-import { bumperRadius, hazardBox, logCenter } from "./hazards/shape.ts";
+import {
+  bumperRadius,
+  hammerDown,
+  hammerLift,
+  hammerPivot,
+  hazardBoxes,
+  logCenter,
+  pistonCenter,
+  pistonOut,
+} from "./hazards/shape.ts";
 import { isIsland, islandOutline, islandRadius } from "./island.ts";
 import { parseLevel } from "./level.ts";
 import { levelWalls } from "./channel.ts";
@@ -24,7 +36,7 @@ import {
   type SimEvent,
 } from "./types.ts";
 
-const FULL = crewZones(MAX_CREW);
+const FULL = crewZones(4);
 const fart: SeatInput = { move: { x: 0, y: 0 }, fart: true };
 const rearFart: SeatInput[] = [fart, fart, IDLE_INPUT, IDLE_INPUT];
 const idle: SeatInput[] = FULL.map(() => IDLE_INPUT);
@@ -63,7 +75,7 @@ const bumper: HazardDef = {
   hy: 1.5,
 };
 
-type Hit = { tick: number; event: Extract<SimEvent, { type: "lifeLost" }> };
+type Hit = { tick: number; event: Extract<SimEvent, { type: "hit" }> };
 
 /**
  * Drive the raft with the rear riders farting until the first hit, then follow it for `after`
@@ -73,7 +85,7 @@ function firstHit(level: LevelData, inputs: SeatInput[] = rearFart, after = 0) {
   const sim = createSim(level, FULL);
   let hit: Hit | undefined;
   for (let t = 0; t < COUNTDOWN_TICKS + 15 * TICK_RATE && !hit; t++) {
-    for (const event of step(sim, inputs)) if (event.type === "lifeLost") hit = { tick: t, event };
+    for (const event of step(sim, inputs)) if (event.type === "hit") hit = { tick: t, event };
   }
   if (!hit) throw new Error("the raft was never hit");
   const velocity = sim.raft.body.linvel();
@@ -90,7 +102,7 @@ function firstHit(level: LevelData, inputs: SeatInput[] = rearFart, after = 0) {
 beforeAll(() => initPhysics());
 
 describe("given a raft that rams a hazard", () => {
-  describe("when the hit costs a life", () => {
+  describe("when the hit wipes the crew out", () => {
     let rammed: ReturnType<typeof firstHit>;
     beforeAll(() => {
       rammed = firstHit(pond(bar));
@@ -120,11 +132,13 @@ describe("given a raft that rams a hazard", () => {
       expect(again.raft).toEqual(rammed.raft);
     });
 
-    it("should leave the raft safe while it reels", () => {
+    it("should leave the raft safe while it tumbles and right after it respawns", () => {
       const { sim } = rammed;
       const events: SimEvent[] = [];
-      for (let t = 0; t < INVULNERABLE_TICKS - 5; t++) events.push(...step(sim, rearFart));
-      expect(events.some((e) => e.type === "lifeLost")).toBe(false);
+      for (let t = 0; t < RESPAWN_TICKS + INVULNERABLE_TICKS - 5; t++)
+        events.push(...step(sim, rearFart));
+      expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
+      expect(events.filter((e) => e.type === "respawn")).toHaveLength(1);
       expect(snapshot(sim).invulnerable).toBeGreaterThan(0);
     });
   });
@@ -149,10 +163,13 @@ describe("given a raft that rams a hazard", () => {
     });
   });
 
-  describe("when the grace window ends and the raft is knocked again", () => {
-    it("should count the invulnerability ticks down in the snapshot", () => {
+  describe("when the raft respawns", () => {
+    it("should count the tumble down, then the grace ticks, in the snapshot", () => {
       const { sim, hit } = firstHit(pond(bar));
-      expect(hit.event.lives).toBe(2);
+      expect(hit.event.deaths).toBe(1);
+      expect(snapshot(sim).respawnIn).toBe(RESPAWN_TICKS);
+      for (let t = 0; t < RESPAWN_TICKS; t++) step(sim, idle);
+      expect(snapshot(sim).respawnIn).toBe(0);
       expect(snapshot(sim).invulnerable).toBe(INVULNERABLE_TICKS);
       step(sim, idle);
       expect(snapshot(sim).invulnerable).toBe(INVULNERABLE_TICKS - 1);
@@ -200,15 +217,15 @@ describe("given a rolling log", () => {
   });
 
   describe("when it rolls into a raft that is waiting in its way", () => {
-    it("should cost a life and throw the raft away from the log", () => {
+    it("should wipe the crew out and throw the raft away from the log", () => {
       // Phased so the log is at the far side of its run when the race starts, then rolls in.
       const sim = createSim(pond({ ...log, x: 6, range: 8, phase: -3 }), FULL);
       const lost: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 12 * TICK_RATE; t++)
-        lost.push(...step(sim, idle).filter((e) => e.type === "lifeLost"));
+        lost.push(...step(sim, idle).filter((e) => e.type === "hit"));
       expect(lost.length).toBeGreaterThanOrEqual(1);
       const first = lost[0]!;
-      expect(first.type === "lifeLost" && Math.abs(first.dirX)).toBeGreaterThan(0.7); // thrown along its travel
+      expect(first.type === "hit" && Math.abs(first.dirX)).toBeGreaterThan(0.7); // thrown along its travel
     });
   });
 
@@ -230,9 +247,9 @@ describe("given a pumpkin bumper", () => {
     });
 
     it("should be bounded by the box the bots keep clear of", () => {
-      const box = hazardBox(bumper, 0);
-      expect(box.hx).toBeCloseTo(bumper.hx * (1 + BUMPER_PULSE));
-      expect(box.hy).toBe(box.hx);
+      const [box] = hazardBoxes(bumper, 0);
+      expect(box!.hx).toBeCloseTo(bumper.hx * (1 + BUMPER_PULSE));
+      expect(box!.hy).toBe(box!.hx);
     });
 
     it("should stay where it floats", () => {
@@ -244,10 +261,10 @@ describe("given a pumpkin bumper", () => {
   });
 
   describe("when the raft rams it", () => {
-    it("should cost a life and fling the raft back harder than a bar does", () => {
+    it("should wipe the crew out and fling the raft back harder than a bar does", () => {
       const asBar = firstHit(pond(bar), rearFart, 20);
       const asBumper = firstHit(pond(bumper), rearFart, 20);
-      expect(asBumper.hit.event.lives).toBe(2);
+      expect(asBumper.hit.event.deaths).toBe(1);
       const retreat = (r: ReturnType<typeof firstHit>) => Math.max(...r.trail.map((v) => -v.x));
       expect(retreat(asBumper)).toBeGreaterThan(retreat(asBar));
       expect(BUMPER_KNOCK).toBeGreaterThan(1);
@@ -290,5 +307,120 @@ describe("given an island", () => {
     // The octagon's flat side is at x = 14 − 3; the raft's hull is 2.9 m. It touches near 8.1.
     expect(raft.x).toBeGreaterThan(7);
     expect(raft.x).toBeLessThan(8.5);
+  });
+});
+
+describe("given a hammer", () => {
+  // Pivot on the far left, the smash zone straight ahead of the raft: (12, 0), 2.4 × 3 m.
+  const hammer: HazardDef = {
+    id: "hammer",
+    kind: "hammer",
+    speed: 1.5,
+    x: 12,
+    y: 0,
+    rot: -Math.PI / 2,
+    hx: 1.2,
+    hy: 1.5,
+  };
+  const period = (2 * Math.PI) / hammer.speed;
+
+  describe("when time passes", () => {
+    it("should hang up high, slam down once a cycle, and lift again", () => {
+      const lifts = Array.from({ length: 200 }, (_, k) => hammerLift(hammer, (k / 200) * period));
+      expect(Math.max(...lifts)).toBeGreaterThan(Math.PI / 2); // rears back past upright
+      expect(Math.min(...lifts)).toBe(0);
+      const down = lifts.map((_, k) => hammerDown(hammer, (k / 200) * period));
+      const slams = down.filter((d, k) => d && !down[k - 1]).length;
+      expect(slams).toBe(1);
+      expect(down.filter(Boolean).length / down.length).toBeGreaterThan(0.15);
+      expect(down.filter(Boolean).length / down.length).toBeLessThan(0.3);
+    });
+
+    it("should fill its smash zone only while down", () => {
+      const up = hazardBoxes(hammer, 0)[0]!;
+      expect(Math.hypot(up.x - hammer.x, up.y - hammer.y)).toBeGreaterThan(1000);
+      const downAt = 0.7 * period;
+      expect(hammerDown(hammer, downAt)).toBe(true);
+      expect(hazardBoxes(hammer, downAt)[0]).toMatchObject({ x: 12, y: 0, hx: 1.2, hy: 1.5 });
+    });
+
+    it("should hang from a pivot HAMMER_ARM m back along its arm", () => {
+      const pivot = hammerPivot(hammer);
+      expect(Math.hypot(pivot.x - hammer.x, pivot.y - hammer.y)).toBeCloseTo(HAMMER_ARM);
+      expect(pivot.y).toBeGreaterThan(hammer.y); // rot points from the pivot to the zone
+    });
+  });
+
+  describe("when the raft waits under it", () => {
+    it("should be safe while the hammer is up and wiped out when it slams", () => {
+      // The raft sits on the smash zone from the start; nobody farts.
+      const sim = createSim({ ...pond(hammer), spawn: { x: 12, y: 0, rot: 0 } }, FULL);
+      const hits: number[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 2 * period * TICK_RATE; t++)
+        for (const e of step(sim, idle)) if (e.type === "hit") hits.push((t + 1) / TICK_RATE);
+      expect(hits.length).toBeGreaterThanOrEqual(1);
+      // Every hit lands while the shared schedule says the hammer is down (after tick t the
+      // hazards have moved t + 1 steps).
+      for (const at of hits) expect(hammerDown(hammer, at)).toBe(true);
+    });
+  });
+});
+
+describe("given a piston", () => {
+  // Rests at (12, 6) in a bank to the left and punches 6 m to the right, across the raft's way.
+  const piston: HazardDef = {
+    id: "piston",
+    kind: "piston",
+    speed: 2,
+    range: 6,
+    x: 12,
+    y: 6,
+    rot: -Math.PI / 2,
+    hx: 1.2,
+    hy: 1.6,
+  };
+
+  describe("when time passes", () => {
+    it("should rest, punch all the way out, hold, and come back", () => {
+      const period = (2 * Math.PI) / piston.speed;
+      const outs = Array.from({ length: 400 }, (_, k) => pistonOut(piston, (k / 400) * period));
+      expect(outs[0]).toBe(0);
+      expect(Math.max(...outs)).toBe(1);
+      expect(outs.filter((o) => o === 1).length / outs.length).toBeCloseTo(PISTON_HOLD, 1);
+      expect(outs.filter((o) => o === 0).length / outs.length).toBeCloseTo(PISTON_REST, 1);
+    });
+
+    it("should be where the shared schedule says", () => {
+      const sim = createSim(pond(piston), FULL);
+      for (let t = 0; t < 150; t++) step(sim, idle);
+      const { x, y } = snapshot(sim).hazards[0]!;
+      const expected = pistonCenter(piston, 150 / TICK_RATE);
+      expect(x).toBeCloseTo(expected.x, 2);
+      expect(y).toBeCloseTo(expected.y, 2);
+      expect(y).toBeLessThanOrEqual(6);
+    });
+  });
+
+  describe("when it punches into a raft", () => {
+    it("should wipe the crew out and throw the raft away along its punch", () => {
+      // Slowed and phased to punch for the first time just after the countdown.
+      const late = { ...piston, speed: 1, phase: -0.47 };
+      const { hit } = firstHit({ ...pond(late), spawn: { x: 12, y: -2, rot: 0 } }, idle);
+      expect(hit.event.dirY).toBeLessThan(-0.5);
+    });
+  });
+});
+
+describe("given a cross", () => {
+  const cross: HazardDef = { ...bar, id: "cross", kind: "cross", speed: 0, hx: 4 };
+
+  it("should fill two bars square to each other", () => {
+    const [a, b] = hazardBoxes(cross, 0);
+    expect(b!.rot - a!.rot).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("should wipe out a raft that rams either bar", () => {
+    // The raft rams the bar along its own axis: only the second, square bar is in its way.
+    expect(firstHit(pond({ ...cross, rot: 0 })).hit.event.dirX).toBeLessThan(-0.9);
   });
 });

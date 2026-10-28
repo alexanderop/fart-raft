@@ -1,8 +1,20 @@
 import * as THREE from "three";
 import { RAFT_HULL, RAFT_RADIUS, type Zone } from "../../sim/constants.ts";
 
-/** One color per seat, shared by the zone marks and the name tags. */
-export const SEAT_COLORS = ["#ff8a3d", "#3d9bff", "#b07cff", "#ffd23f"] as const;
+/**
+ * One color per seat, shared by the zone marks, the name tags and the tint of riders 4–7. Seats
+ * 4–7 (online crews only) stay clear of the slime-green water and of the first four.
+ */
+export const SEAT_COLORS = [
+  "#ff8a3d",
+  "#3d9bff",
+  "#b07cff",
+  "#ffd23f",
+  "#ff4fb0",
+  "#5ee9ff",
+  "#b8f53b",
+  "#ff4a4a",
+] as const;
 
 const DECK_Y = 0.41; // just above the kit raft's floor (top ≈ 0.39)
 const DECK_EDGE = RAFT_RADIUS - 0.3; // where the deck meets the ring tube

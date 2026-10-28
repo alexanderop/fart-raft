@@ -1,11 +1,16 @@
 import * as THREE from "three";
 import type { SimEvent } from "../../sim/types.ts";
 import { applyPose } from "../render/coords.ts";
+import { detectQuality } from "../render/quality.ts";
 
-const CAPACITY = 384;
 const BUBBLES = 24;
-const SPEED = 3.5;
-const TINTS = [0x8ed14a, 0xa6dc4c, 0xc7e34a, 0xdcea5a, 0x7fcf6b].map((c) => new THREE.Color(c));
+/** Jet speed (m/s) as a puff leaves a rider: with the drag below it carries ≈ 3.5 m. */
+const SPEED = 9;
+/** Seconds between two puffs of one seat's jet: dense enough to read as one plume. */
+const PUFF_EVERY = 0.025;
+/** A puff swells to this many times its birth size by the end of its life, so a jet fans out. */
+const SWELL = 2.4;
+const TINTS = [0x8fe03a, 0xa4ea3c, 0xbdf04a, 0x7fd832, 0xc9f25c].map((c) => new THREE.Color(c));
 
 type Puff = {
   age: number;
@@ -17,7 +22,10 @@ type Puff = {
   vy: number;
   rise: number;
   size: number;
+  /** How much the puff swells over its life (0 = not at all). */
+  swell: number;
   seed: number;
+  tint: THREE.Color;
 };
 
 type Bubble = { age: number; x: number; y: number; size: number };
@@ -32,7 +40,9 @@ const blank = (): Puff => ({
   vy: 0,
   rise: 0,
   size: 0,
+  swell: 0,
   seed: 0,
+  tint: TINTS[0]!,
 });
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -44,19 +54,30 @@ const smooth = (a: number, b: number, x: number) => {
 };
 
 /**
- * Fart clouds. Each fart spawns a small cluster of toon puffs that pop in with overshoot,
- * wobble, drift on their own drag and rise, then shrink away. An InstancedMesh with a fixed
- * ring of slots: the oldest puff is overwritten when full. Farts fire every sim tick, so
- * each seat is rate-limited. Now and then a bubble ring pops on the water.
+ * Fart jets, like Fart Together's big lime plumes: while a seat farts it streams puffs that pop
+ * in with overshoot, shoot out behind the rider, swell as they slow so the jet fans out into a
+ * cloud, wobble, then shrink away. An InstancedMesh with a fixed
+ * ring of slots: the oldest puff is overwritten when full. Only live puffs are drawn: they are
+ * packed into the first instances each frame and `count` trimmed to them. Farts fire every sim
+ * tick, so each seat is rate-limited. Now and then a bubble ring pops on the water.
  */
 export function createParticles(scene: THREE.Scene) {
+  const { puffCapacity: CAPACITY, puffDetail } = detectQuality();
   const mesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(0.5, 2),
-    new THREE.MeshToonMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }),
+    new THREE.IcosahedronGeometry(0.5, puffDetail),
+    // A little lime glow keeps the gas neon even on the shaded side.
+    new THREE.MeshToonMaterial({
+      color: 0xffffff,
+      emissive: 0x4f9a12,
+      emissiveIntensity: 0.55,
+      transparent: true,
+      opacity: 0.92,
+    }),
     CAPACITY,
   );
   mesh.frustumCulled = false;
   for (let i = 0; i < CAPACITY; i++) mesh.setColorAt(i, TINTS[0]!);
+  mesh.count = 0;
   scene.add(mesh);
 
   const ringMesh = new THREE.InstancedMesh(
@@ -84,33 +105,34 @@ export function createParticles(scene: THREE.Scene) {
     size: number,
     speed: number,
     back: number,
+    swell: number,
   ) => {
     const slot = next;
     const puff = puffs[slot]!;
     next = (next + 1) % CAPACITY;
-    const jitter = rand(-0.5, 0.5);
+    const jitter = rand(-0.22, 0.22);
     Object.assign(puff, {
       age: 0,
-      life: rand(0.55, 0.85),
-      x: e.x + e.dirX * back + rand(-0.12, 0.12),
-      y: e.y + e.dirY * back + rand(-0.12, 0.12),
-      h: 0.35 + rand(0, 0.1),
+      life: rand(0.8, 1.15),
+      x: e.x + e.dirX * back + rand(-0.15, 0.15),
+      y: e.y + e.dirY * back + rand(-0.15, 0.15),
+      h: 0.5 + rand(0, 0.15),
       vx: (e.dirX - e.dirY * jitter) * speed,
       vy: (e.dirY + e.dirX * jitter) * speed,
-      rise: rand(0.8, 1.4),
+      rise: rand(0.2, 0.6),
       size,
+      swell,
       seed: rand(0, 6.28),
+      tint: TINTS[Math.floor(Math.random() * TINTS.length)]!,
     });
-    mesh.setColorAt(slot, TINTS[Math.floor(Math.random() * TINTS.length)]!);
   };
 
   return {
     onEvent(e: SimEvent) {
       if (e.type !== "fart" || (cooldown[e.seat] ?? 0) > 0) return;
-      cooldown[e.seat] = 0.09;
-      spawn(e, rand(0.32, 0.45), SPEED, 0.1);
-      if (Math.random() < 0.7) spawn(e, rand(0.2, 0.3), SPEED * 1.5, 0.4);
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      cooldown[e.seat] = PUFF_EVERY;
+      spawn(e, rand(0.45, 0.6), rand(0.85, 1.1) * SPEED, 0.3, SWELL * rand(0.8, 1.2));
+      if (Math.random() < 0.5) spawn(e, rand(0.25, 0.35), SPEED * 0.5, 0.2, SWELL * 0.6);
       if (Math.random() < 0.12) {
         const b = bubbles[nextBubble]!;
         nextBubble = (nextBubble + 1) % BUBBLES;
@@ -125,33 +147,35 @@ export function createParticles(scene: THREE.Scene) {
     update(dt: number) {
       cooldown.forEach((_, i) => (cooldown[i] = Math.max(0, cooldown[i]! - dt)));
       const drag = Math.exp(-2.6 * dt);
-      puffs.forEach((puff, i) => {
+      let live = 0;
+      puffs.forEach((puff) => {
         puff.age += dt;
         const t = puff.age / puff.life;
-        if (t >= 1) {
-          dummy.scale.setScalar(0);
-        } else {
-          puff.vx *= drag;
-          puff.vy *= drag;
-          puff.x += puff.vx * dt;
-          puff.y += puff.vy * dt;
-          puff.h += puff.rise * dt * (1 - t);
-          const pop = easeOutBack(Math.min(1, puff.age / 0.22));
-          const shrink = 1 - smooth(0.55, 1, t) * 0.95;
-          const s = puff.size * pop * shrink;
-          const w = puff.age * 13 + puff.seed;
-          applyPose(dummy, { x: puff.x, y: puff.y, rot: puff.seed }, puff.h);
-          // Jelly wobble: squash and stretch out of phase on each axis.
-          dummy.scale.set(
-            s * (1 + 0.14 * Math.sin(w)),
-            s * (1 + 0.14 * Math.cos(w * 0.8 + 1)),
-            s * (1 + 0.14 * Math.sin(w * 1.2 + 2)),
-          );
-        }
+        if (t >= 1) return;
+        puff.vx *= drag;
+        puff.vy *= drag;
+        puff.x += puff.vx * dt;
+        puff.y += puff.vy * dt;
+        puff.h += puff.rise * dt * (1 - t);
+        const pop = easeOutBack(Math.min(1, puff.age / 0.22));
+        const shrink = 1 - smooth(0.6, 1, t) * 0.95;
+        const s = puff.size * pop * (1 + puff.swell * Math.sqrt(t)) * shrink;
+        const w = puff.age * 13 + puff.seed;
+        applyPose(dummy, { x: puff.x, y: puff.y, rot: puff.seed }, puff.h);
+        // Jelly wobble: squash and stretch out of phase on each axis.
+        dummy.scale.set(
+          s * (1 + 0.14 * Math.sin(w)),
+          s * (1 + 0.14 * Math.cos(w * 0.8 + 1)),
+          s * (1 + 0.14 * Math.sin(w * 1.2 + 2)),
+        );
         dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
+        mesh.setMatrixAt(live, dummy.matrix);
+        mesh.setColorAt(live, puff.tint);
+        live++;
       });
+      mesh.count = live;
       mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
       bubbles.forEach((b, i) => {
         b.age += dt;

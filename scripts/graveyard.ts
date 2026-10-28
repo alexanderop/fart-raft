@@ -21,6 +21,8 @@ const channel: Channel = {
     { x: 400, y: 70 },
   ],
   spikes: [],
+  // The sprint home: whitewater from the last bend to the finish.
+  rapids: [{ from: 405, to: 470 }],
 };
 
 const { samples, length, at, across, gate, outerBends } = channelKit(channel);
@@ -72,9 +74,9 @@ const level: LevelData = {
     // Logs roll across the pool by the crypt, out of step.
     log("log-1", 150, 7, 0.55, 0),
     log("log-2", 190, 7, 0.7, 2.2),
-    // The witch's mill grinds the way out of the crypt: its bar sweeps the middle, and the
-    // wide lane along the bank is clear.
-    { ...across(256, 5, 0.45), id: "spinner-1", kind: "spinner", speed: 0.8 },
+    // The witch's mill grinds the way out of the crypt: its cross sweeps the middle, and the
+    // wide lane along either bank is clear.
+    { ...across(256, 5, 0.45), id: "cross-1", kind: "cross", speed: 0.8 },
     // Another pair in the last bend, with a gap wider than the raft.
     bumper("bumper-3", 318, -7, 2.4),
     bumper("bumper-4", 318, 7, 2.4, 1.5, Math.PI / 2),

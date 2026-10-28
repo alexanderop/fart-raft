@@ -6,7 +6,7 @@ import { bumperRadius } from "./shape.ts";
 
 /**
  * A round spiked pumpkin that swells and shrinks where it floats, and throws the raft far
- * harder than a bar does. Touching it costs a life.
+ * harder than a bar does. Touching it wipes the crew out.
  */
 export function createBumper(world: RAPIER.World, def: HazardDef): Hazard {
   const body = world.createRigidBody(
@@ -23,7 +23,7 @@ export function createBumper(world: RAPIER.World, def: HazardDef): Hazard {
   return {
     id: def.id,
     body,
-    colliderHandle: collider.handle,
+    colliderHandles: [collider.handle],
     knock: BUMPER_KNOCK,
     update(dt) {
       t += dt;

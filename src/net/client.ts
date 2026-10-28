@@ -2,7 +2,17 @@ import { Cause, Context, Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import type { SeatInput } from "../sim/types.ts";
-import { RaftRpcs, RoomFull, ServerMsg, type Frame } from "./protocol.ts";
+import {
+  RaftRpcs,
+  RoomFull,
+  RoomNotFound,
+  ServerBusy,
+  ServerMsg,
+  type CourseName,
+  type Frame,
+  type Roster,
+  type Welcome,
+} from "./protocol.ts";
 
 // The only place the browser touches Effect: everything else sees the plain Connection below.
 
@@ -20,10 +30,17 @@ export const clientLayer = (url: string) =>
   );
 
 export type Connection = {
+  /** The lobby seat. The rider it drives in a race is `riderOf(roster(), seat)`. */
   readonly seat: number;
-  readonly crew: number;
+  readonly code: string;
+  /** The room as of the latest Roster message. */
+  roster(): Roster;
+  /** Called on every roster change. Returns a function that stops listening. */
+  onRoster(handler: (roster: Roster) => void): () => void;
   /** Sends only when the input differs from the last one sent. */
   send(input: SeatInput): void;
+  /** Host only: leave the lobby and start the race. */
+  start(): void;
   restart(): void;
   /** Frames that arrived before the handler was set are delivered first. */
   onFrame(handler: (frame: Frame) => void): void;
@@ -35,16 +52,61 @@ export type Connection = {
 const sameInput = (a: SeatInput, b: SeatInput) =>
   a.fart === b.fart && a.move.x === b.move.x && a.move.y === b.move.y;
 
-/** Resolves once the server has given us a seat. Rejects if the room is full or the server is unreachable. */
-export async function connect(url: string, timeoutMs = 5000): Promise<Connection> {
+const reasonFor = (cause: Cause.Cause<unknown>, code: string): string => {
+  const error = Cause.squash(cause);
+  if (error instanceof RoomFull) return "That game is full";
+  if (error instanceof RoomNotFound) return `No game with code ${code}`;
+  if (error instanceof ServerBusy) return "The server is busy, try again in a bit";
+  return "Connection lost";
+};
+
+const unreachable = (url: string) => new Error(`No answer from ${url}`);
+
+/** Opens a new room on the server at `url` and returns its code. Nobody holds a seat yet. */
+export async function createRoom(url: string, course: CourseName, timeoutMs = 5000) {
+  const runtime = ManagedRuntime.make(clientLayer(url));
+  try {
+    return await runtime.runPromise(
+      Effect.gen(function* () {
+        const client = yield* RaftClient;
+        return yield* client.CreateRoom({ course });
+      }).pipe(
+        Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => Effect.fail(unreachable(url)) }),
+        Effect.mapError((error) =>
+          error instanceof ServerBusy
+            ? new Error(reasonFor(Cause.fail(error), ""))
+            : error instanceof RpcClientError.RpcClientError
+              ? unreachable(url)
+              : error,
+        ),
+      ),
+    );
+  } finally {
+    void runtime.dispose();
+  }
+}
+
+/**
+ * Joins room `code` as `name`. Resolves once the server has given us a seat and the room's
+ * roster. Rejects if the room is full or gone, or the server is unreachable.
+ */
+export async function connect(
+  url: string,
+  code: string,
+  name: string,
+  timeoutMs = 5000,
+): Promise<Connection> {
   const runtime = ManagedRuntime.make(clientLayer(url));
   let frameHandler: ((frame: Frame) => void) | undefined;
   let closeHandler: ((reason: string) => void) | undefined;
+  const rosterHandlers = new Set<(roster: Roster) => void>();
   const backlog: Frame[] = [];
+  let welcome: Welcome | undefined;
+  let roster: Roster | undefined;
 
-  let seated!: (seat: { seat: number; crew: number }) => void;
+  let seated!: () => void;
   let refused!: (error: Error) => void;
-  const welcome = new Promise<{ seat: number; crew: number }>((resolve, reject) => {
+  const ready = new Promise<void>((resolve, reject) => {
     seated = resolve;
     refused = reject;
   });
@@ -55,46 +117,60 @@ export async function connect(url: string, timeoutMs = 5000): Promise<Connection
 
   const client = await runtime.runPromise(Effect.service(RaftClient));
   runtime.runFork(
-    client.Join().pipe(
+    client.Join({ code, name }).pipe(
       Stream.runForEach((msg) =>
         Effect.sync(() =>
           ServerMsg.match(msg, {
-            Welcome: ({ seat, crew }) => seated({ seat, crew }),
+            Welcome: (w) => {
+              welcome = w;
+            },
+            Roster: (r) => {
+              roster = r.roster;
+              if (welcome) seated();
+              for (const handler of rosterHandlers) handler(r.roster);
+            },
             Frame: (frame) => (frameHandler ? frameHandler(frame) : backlog.push(frame)),
           }),
         ),
       ),
       Effect.matchCause({
         onSuccess: () => lost("The server closed the connection"),
-        onFailure: (cause) =>
-          lost(Cause.squash(cause) instanceof RoomFull ? "The room is full" : "Connection lost"),
+        onFailure: (cause) => lost(reasonFor(cause, code)),
       }),
     ),
   );
 
-  const timer = setTimeout(() => lost(`No answer from ${url}`), timeoutMs);
-  let me: { seat: number; crew: number };
+  const timer = setTimeout(() => lost(unreachable(url).message), timeoutMs);
   try {
-    me = await welcome;
+    await ready;
   } catch (error) {
     void runtime.dispose();
     throw error;
   } finally {
     clearTimeout(timer);
   }
+  const me = welcome!;
+  const seat = { code, token: me.token };
 
   let last: SeatInput | undefined;
   return {
-    ...me,
+    seat: me.seat,
+    code,
+    roster: () => roster!,
+    onRoster(handler) {
+      rosterHandlers.add(handler);
+      return () => rosterHandlers.delete(handler);
+    },
     send(input) {
       if (last && sameInput(last, input)) return;
       last = input;
-      runtime.runFork(
-        client.SendInput({ seat: me.seat, input }, { discard: true }).pipe(Effect.ignore),
-      );
+      runtime.runFork(client.SendInput({ ...seat, input }, { discard: true }).pipe(Effect.ignore));
+    },
+    start() {
+      runtime.runFork(client.Start(seat).pipe(Effect.ignore));
     },
     restart() {
-      runtime.runFork(client.Restart().pipe(Effect.ignore));
+      runtime.runFork(client.Restart(seat).pipe(Effect.ignore));
     },
     onFrame(handler) {
       frameHandler = handler;

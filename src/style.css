@@ -5,6 +5,11 @@
   --hud-fg: #fff;
   --outline: #2a1440;
   --gas: #8ed14a;
+  /* Notches and home indicators (viewport-fit=cover). */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -16,6 +21,10 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
   background: #2b1a4d;
   font-family:
     "Fredoka", "Baloo 2", ui-rounded, "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif;
@@ -23,6 +32,19 @@ body {
 
 canvas {
   display: block;
+}
+
+/* Fixed to the layout viewport, so it follows the iOS address bar and rotation; scene.ts sizes
+   the drawing buffer from this box. */
+.game-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+button {
+  touch-action: manipulation;
 }
 
 .hud {
@@ -37,9 +59,9 @@ canvas {
 
 .hud-track {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: var(--safe-t);
+  left: var(--safe-l);
+  right: var(--safe-r);
   height: 12px;
   border-radius: 0 0 8px 8px;
   background: rgb(255 255 255 / 0.85);
@@ -83,7 +105,7 @@ canvas {
 .hud-timer,
 .hud-farts {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--safe-t));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -104,7 +126,7 @@ canvas {
 }
 
 .hud-farts {
-  right: 12px;
+  right: calc(12px + var(--safe-r));
   border-radius: 0 0 16px 16px;
   padding: 4px 14px 5px 12px;
 }
@@ -216,6 +238,45 @@ canvas {
   font-size: 22px;
   font-weight: 800;
   -webkit-text-stroke: 4px var(--outline);
+}
+
+/* Small screens: smaller pills so timer, skulls and puffs share a 360 px top edge. */
+@media (max-width: 480px), (max-height: 480px) {
+  .hud-timer,
+  .hud-farts {
+    gap: 6px;
+    padding: 3px 10px 4px;
+    font-size: 18px;
+  }
+
+  .hud-timer svg,
+  .hud-farts svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .hud-finish {
+    padding: 14px 16px 18px;
+    border-radius: 32px;
+  }
+
+  .finish-hint {
+    font-size: 18px;
+  }
+}
+
+@media (max-height: 480px) {
+  .hud-finish {
+    width: min(360px, calc(100vw - 32px));
+  }
+
+  .finish-title {
+    font-size: 32px;
+  }
+
+  .finish-time {
+    font-size: 44px;
+  }
 }
 
 @keyframes slam {
@@ -462,14 +523,19 @@ canvas {
 .menu {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 16px;
+  display: flex;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b))
+    calc(16px + var(--safe-l));
   background: linear-gradient(180deg, #0d0820 0%, #2b1a4d 55%, #e8701a 100%);
   z-index: 10;
 }
 
 .menu-card {
+  /* Auto margins center the card, and let a card taller than the screen scroll from its top. */
+  margin: auto;
   width: min(460px, 100%);
   padding: 28px 24px;
   border-radius: 28px;
@@ -541,6 +607,7 @@ canvas {
 
 .menu-players button {
   min-width: 52px;
+  min-height: 48px;
   padding: 10px 14px;
   font-size: 20px;
   background: #eef7fd;
@@ -561,6 +628,7 @@ canvas {
 
 .menu-bots {
   display: inline-flex;
+  min-height: 44px;
   gap: 8px;
   align-items: center;
   margin: 18px 0 6px;
@@ -596,7 +664,8 @@ canvas {
   background: #eef7fd;
 }
 
-.menu-seats li.bot {
+.menu-seats li.bot,
+.menu-seats li.open {
   background: #f3f0fb;
   color: #6b5fa0;
 }
@@ -645,6 +714,7 @@ canvas {
 .banner {
   position: fixed;
   inset: 0 0 auto;
+  z-index: 20;
   padding: 12px;
   text-align: center;
   font-weight: 900;
@@ -657,6 +727,10 @@ canvas {
   background: #c0392b;
 }
 
+.menu-hint[hidden] {
+  display: none;
+}
+
 .menu-hint {
   margin: 14px 0 0;
   font-size: 13px;
@@ -664,8 +738,395 @@ canvas {
   opacity: 0.75;
 }
 
+/* ── Online lobby ───────────────────────────────────────────────────────── */
+
+.lobby {
+  display: grid;
+  gap: 10px;
+}
+
+.lobby .menu-label {
+  margin: 6px 0 0;
+}
+
+.lobby-title {
+  font-size: clamp(36px, 8vw, 48px);
+  margin-bottom: 8px;
+}
+
+.lobby-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  border: 3px solid var(--outline);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--outline);
+  text-align: center;
+}
+
+.lobby-input:focus-visible {
+  outline: 3px solid #ffb347;
+  outline-offset: 2px;
+}
+
+.lobby-split {
+  display: grid;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.lobby-split section {
+  display: grid;
+  gap: 8px;
+}
+
+.lobby-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.lobby-row .menu-online {
+  width: auto;
+  margin: 0;
+  padding: 10px 16px;
+  white-space: nowrap;
+}
+
+.lobby-code-input {
+  flex: 1;
+  font-size: 26px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.lobby-courses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.lobby-course {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.lobby-course small {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.menu-online:disabled,
+.menu-start:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.lobby-error {
+  min-height: 1.3em;
+  margin: 0;
+  font-weight: 800;
+  color: #c0392b;
+}
+
+.lobby-error.info {
+  color: var(--outline);
+  opacity: 0.75;
+}
+
+.lobby-back {
+  justify-self: center;
+  min-height: 44px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 800;
+  border: 0;
+  background: none;
+  color: var(--outline);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.lobby-back:hover,
+.lobby-back:focus-visible {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.lobby-code {
+  font-size: clamp(56px, 16vw, 84px);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  color: var(--gas);
+  -webkit-text-stroke: 7px var(--outline);
+  paint-order: stroke fill;
+  text-shadow: 0 6px 0 var(--outline);
+}
+
+.lobby-course-name {
+  font-weight: 800;
+}
+
+.lobby-invite .lobby-input {
+  flex: 1;
+  font-size: 13px;
+  text-align: left;
+}
+
+.lobby-seats {
+  margin: 4px 0 6px;
+}
+
+.lobby-seats li {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.lobby-seats li small {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.lobby-seats li.me {
+  background: #e3f6cf;
+  box-shadow: inset 0 0 0 2px var(--gas);
+}
+
+.lobby [hidden] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .menu-card {
     animation: none;
+  }
+}
+
+/* Phones: tighter card so the menu fits 360 × 640 portrait without scrolling, and scrolls in
+   640 × 360 landscape. */
+@media (max-width: 420px) {
+  .menu-card {
+    padding: 20px 16px;
+    border-radius: 24px;
+  }
+
+  .menu-sub {
+    margin: 6px 0 14px;
+  }
+
+  .menu-players button {
+    min-width: 48px;
+    padding: 8px 10px;
+  }
+
+  .menu-start {
+    font-size: 24px;
+    padding: 12px;
+  }
+
+  .lobby-row {
+    flex-wrap: wrap;
+  }
+
+  .lobby-row .menu-online {
+    flex: 1;
+  }
+
+  .lobby-code-input {
+    min-width: 0;
+    letter-spacing: 0.2em;
+  }
+}
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .menu-card {
+    width: min(680px, 100%);
+    padding: 16px 20px;
+  }
+
+  /* Two columns: who plays on the left, seats and the start buttons on the right. */
+  .menu-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    column-gap: 20px;
+  }
+
+  .menu-title {
+    font-size: 36px;
+  }
+
+  .menu-sub {
+    margin: 4px 0 10px;
+  }
+
+  .menu-seats {
+    margin: 0 0 12px;
+  }
+
+  .menu-bots {
+    margin: 10px 0 0;
+  }
+
+  .menu-start {
+    padding: 10px;
+  }
+
+  .menu-hint {
+    margin-top: 10px;
+  }
+
+  .lobby-split {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* iOS zooms into any focused input under 16 px. */
+@media (pointer: coarse) {
+  .lobby-invite .lobby-input {
+    font-size: 16px;
+  }
+}
+
+/* ── Touch controls ─────────────────────────────────────────────────────── */
+
+.touch {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.touch[hidden] {
+  display: none;
+}
+
+/* The left half takes the stick; the stick base appears where the thumb lands. */
+.touch-stick-zone {
+  position: absolute;
+  top: calc(64px + var(--safe-t));
+  bottom: 0;
+  left: 0;
+  width: 50%;
+  touch-action: none;
+}
+
+.touch-stick {
+  position: absolute;
+  left: 25%;
+  top: 70%;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.18);
+  border: 4px solid rgb(255 255 255 / 0.55);
+  box-shadow:
+    0 0 0 3px var(--outline),
+    0 5px 0 3px rgb(0 0 0 / 0.25);
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.touch-stick.on {
+  opacity: 1;
+  transition: none;
+}
+
+.touch-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--outline);
+  box-shadow: 0 4px 0 var(--outline);
+}
+
+.touch-fart {
+  position: absolute;
+  right: calc(20px + var(--safe-r));
+  bottom: calc(24px + var(--safe-b));
+  width: 116px;
+  height: 116px;
+  padding: 0;
+  border-radius: 50%;
+  border: 5px solid var(--outline);
+  background: var(--gas);
+  color: #fff;
+  font: inherit;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  -webkit-text-stroke: 5px var(--outline);
+  paint-order: stroke fill;
+  box-shadow: 0 8px 0 var(--outline);
+  touch-action: none;
+  transition:
+    translate 0.08s,
+    box-shadow 0.08s;
+}
+
+.touch-fart.on {
+  translate: 0 6px;
+  box-shadow: 0 2px 0 var(--outline);
+  background: #b6e36c;
+}
+
+.touch-top {
+  position: absolute;
+  top: calc(56px + var(--safe-t));
+  left: calc(12px + var(--safe-l));
+  display: flex;
+  gap: 10px;
+}
+
+.touch-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 16px;
+  border: 3px solid var(--outline);
+  background: #2b3441;
+  color: #fff;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 4px 0 var(--outline);
+  touch-action: manipulation;
+}
+
+.touch-btn:active {
+  translate: 0 3px;
+  box-shadow: 0 1px 0 var(--outline);
+}
+
+@media (max-height: 480px) {
+  .touch-fart {
+    width: 96px;
+    height: 96px;
+    font-size: 22px;
+    bottom: calc(16px + var(--safe-b));
+  }
+
+  .touch-top {
+    top: calc(48px + var(--safe-t));
   }
 }

@@ -1,27 +1,41 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import { RaftRpcs } from "../src/net/protocol.ts";
+import { RaftRpcs, type CourseName } from "../src/net/protocol.ts";
 import type { LevelData } from "../src/sim/types.ts";
-import { Room, roomLayer } from "./room.ts";
+import { Lobby, lobbyLayer, type LobbyOptions } from "./lobby.ts";
+import type { Room } from "./room.ts";
 
 const handlers = RaftRpcs.toLayer(
   Effect.gen(function* () {
-    const room = yield* Room;
+    const lobby = yield* Lobby;
+    // Messages for a room that is gone are dropped, like input for a seat that is gone.
+    const inRoom = (code: string, f: (room: Room) => Effect.Effect<void>) =>
+      lobby.find(code).pipe(Effect.flatMap(f), Effect.ignore);
     return RaftRpcs.of({
-      Join: () => room.join,
-      SendInput: ({ seat, input }) => room.sendInput(seat, input),
-      Restart: () => room.restart(),
+      CreateRoom: ({ course }) => lobby.create(course),
+      Join: ({ code, name }) =>
+        Stream.unwrap(lobby.find(code).pipe(Effect.map((room) => room.join(name)))),
+      SendInput: ({ code, token, input }) => inRoom(code, (r) => r.sendInput(token, input)),
+      Start: ({ code, token }) => inRoom(code, (r) => r.start(token)),
+      Restart: ({ code, token }) => inRoom(code, (r) => r.restart(token)),
     });
   }),
 );
 
-/** The room served as JSON RPC over WebSocket at /rpc. Needs an `HttpServer` underneath. */
-export const appLayer = (level: LevelData) =>
-  HttpRouter.serve(
-    RpcServer.layerHttp({ group: RaftRpcs, path: "/rpc", protocol: "websocket" }).pipe(
-      Layer.provide(handlers),
-      Layer.provide(roomLayer(level)),
-      Layer.provide(RpcSerialization.layerJson),
-    ),
+/** The lobby's RPC routes: JSON over WebSocket at /rpc. */
+export const rpcLayer = (
+  courses: Record<CourseName, LevelData>,
+  options: Partial<LobbyOptions> = {},
+) =>
+  RpcServer.layerHttp({ group: RaftRpcs, path: "/rpc", protocol: "websocket" }).pipe(
+    Layer.provide(handlers),
+    Layer.provide(lobbyLayer(courses, options)),
+    Layer.provide(RpcSerialization.layerJson),
   );
+
+/** The lobby served on its own. Needs an `HttpServer` underneath. */
+export const appLayer = (
+  courses: Record<CourseName, LevelData>,
+  options: Partial<LobbyOptions> = {},
+) => HttpRouter.serve(rpcLayer(courses, options));

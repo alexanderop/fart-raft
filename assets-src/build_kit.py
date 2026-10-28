@@ -475,6 +475,63 @@ def build_bumper():
     return join("bumper", parts)
 
 
+HAMMER_ARM = 6.0  # = sim HAMMER_ARM: pivot to the centre of the smash zone
+HAMMER_R = 1.2  # head drum radius: it rests on the water with its axle HAMMER_R up
+HAMMER_HALF = 1.5  # head half-length across the arm; the client scales that axis by hy / HAMMER_HALF
+
+
+def build_hammer():
+    """Swinging mallet for the `hammer` hazard, modelled DOWN: the arm runs along +X from the axle
+    at the origin (HAMMER_R above the water) to a spiked drum centred at x = HAMMER_ARM, its axis
+    across the arm (Y). The client yaws it to the sim `rot` and raises it about the axle (Y)."""
+    zc = HAMMER_R
+    across = (math.pi / 2, 0, 0)  # turns a Z-axis primitive onto the Y axis
+    along = (0, math.pi / 2, 0)
+    parts = [cyl((0, 0, zc), 0.45, 1.6, M["hub"], 16, rot=across)]  # axle hub
+    parts.append(cyl((HAMMER_ARM / 2, 0, zc), 0.28, HAMMER_ARM - 0.6, M["bark"], 12, rot=along))  # handle
+    for x in (1.2, HAMMER_ARM - 1.6):
+        parts.append(torus((x, 0, zc), 0.3, 0.07, M["hat_band"], rot=along, seg=16, mseg=6))
+    parts.append(cyl((HAMMER_ARM, 0, zc), HAMMER_R - 0.25, HAMMER_HALF * 2, M["magenta"], 20, rot=across))
+    for sgn in (1, -1):  # bone end caps
+        parts.append(cyl((HAMMER_ARM, sgn * HAMMER_HALF, zc), HAMMER_R - 0.15, 0.18, M["gold"], 20, rot=across))
+    parts.append(torus((HAMMER_ARM, 0, zc), HAMMER_R - 0.24, 0.07, M["flame"], rot=across, seg=24, mseg=6))
+    for row, y in enumerate((-1.05, -0.35, 0.35, 1.05)):  # spikes all round the drum
+        for k in range(8):
+            a = (k + 0.5 * (row % 2)) / 8 * math.tau
+            d = (math.cos(a), 0, math.sin(a))
+            r = HAMMER_R - 0.27
+            parts.append(spike((HAMMER_ARM + d[0] * r, y, zc + d[2] * r), d, 0.13, 0.3, M["spike"], n=5))
+    return join("hammer", parts)
+
+
+def build_hammer_post():
+    """The bank post the hammer hangs from: a bone pillar with a slime cap; the axle sits HAMMER_R up."""
+    parts = [box((0, 0, 0.9), (1.0, 2.2, 1.8), M["sign_frame"], bevel=0.08)]
+    parts.append(box((0, 0, 1.85), (1.15, 2.35, 0.14), M["mint"], bevel=0.04))
+    for sgn in (1, -1):
+        parts.append(cyl((0, sgn * 0.9, HAMMER_R), 0.3, 0.25, M["gold"], 12, rot=(math.pi / 2, 0, 0)))
+    return join("hammer_post", parts)
+
+
+def build_piston():
+    """Punching block for the `piston` hazard: half-extents 1 x 1 (X out of the bank, Y along it),
+    1.4 tall, bone spikes on its +X face. The client scales it (hx, hy, 1)."""
+    sx = 0.8  # the template is usually scaled ~1.2 along X: keep the spikes round-ish
+    parts = [box((0, 0, 0.7), (2.0, 2.0, 1.4), M["magenta"], bevel=0.08)]
+    parts.append(box((0.98, 0, 0.7), (0.12, 2.1, 1.5), M["mint"], bevel=0.03))
+    parts.append(box((-0.7, 0, 1.42), (0.5, 1.7, 0.08), M["flame"]))
+    for y in (-0.6, 0.0, 0.6):
+        for z in (0.4, 1.0):
+            parts.append(spike((1.02, y, z), (1, 0, 0), 0.17, 0.45, M["spike"], sx, n=5))
+    return join("piston", parts)
+
+
+def build_piston_rod():
+    """The piston's ram: 1 m along -X from the origin, 0.7 up. The client stretches X to the bank."""
+    parts = [cyl((-0.5, 0, 0.7), 0.3, 1.0, M["hub"], 12, rot=(0, math.pi / 2, 0))]
+    return join("piston_rod", parts)
+
+
 BAMBOO_H = 8.5  # gate pole height; gates.ts hangs the crossbar at BAR_Z
 BAR_Z = 7.4
 
@@ -682,6 +739,10 @@ def build_all():
         build_sweeper(),
         build_log(),
         build_bumper(),
+        build_hammer(),
+        build_hammer_post(),
+        build_piston(),
+        build_piston_rod(),
         build_spike_strip(),
         build_tree_round(),
         build_bush(),

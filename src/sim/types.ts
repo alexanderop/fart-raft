@@ -21,16 +21,18 @@ export type SimEvent =
   | { type: "go" }
   | { type: "checkpoint"; index: number }
   | { type: "finished"; timeMs: number }
-  /** A hazard or a spike hit: `lives` is what is left. (dirX, dirY) is the unit direction the hit throws the raft. */
-  | { type: "lifeLost"; lives: number; x: number; y: number; dirX: number; dirY: number }
-  /** The last life went: the race is over. */
-  | { type: "died"; timeMs: number };
+  /**
+   * A hazard or a spike hit wiped the crew out: `deaths` counts every wipeout so far. (dirX, dirY)
+   * is the unit direction the hit throws the raft. It respawns at the last gate shortly after.
+   */
+  | { type: "hit"; deaths: number; x: number; y: number; dirX: number; dirY: number }
+  /** The raft is back at the last gate passed (or the start): (x, y) is where it reappeared. */
+  | { type: "respawn"; x: number; y: number };
 
 export type Phase =
   | { kind: "countdown"; ticksLeft: number }
   | { kind: "racing"; startTick: number; nextCheckpoint: number }
-  | { kind: "finished"; timeMs: number }
-  | { kind: "dead"; timeMs: number; nextCheckpoint: number };
+  | { kind: "finished"; timeMs: number };
 
 export type Pose = { x: number; y: number; rot: number };
 
@@ -42,9 +44,11 @@ export type Snapshot = {
   raft: Pose;
   riders: RiderPose[];
   gas: number[];
-  /** Lives the crew has left. */
-  lives: number;
-  /** Ticks of grace left after the last hit: the raft cannot be hurt while this is above 0. */
+  /** Wipeouts so far: every hit sends the crew back to the last gate, the clock keeps running. */
+  deaths: number;
+  /** Ticks until a wiped-out raft respawns, 0 while it is afloat. The crew is helpless meanwhile. */
+  respawnIn: number;
+  /** Ticks of grace left after a respawn: the raft cannot be hurt while this is above 0. */
   invulnerable: number;
   hazards: (Pose & { id: string })[];
   phase: Phase;
@@ -58,30 +62,39 @@ export type Vec2 = { x: number; y: number };
 
 /**
  * Spinner: a bar rotating about its center at `speed` rad/s.
+ * Cross: a spinner with two bars, square to each other.
  * Sweeper: a bar pivoting at (x, y), arm of length 2·hx along `rot`, swinging ±SWEEP_AMPLITUDE
  * with angular frequency `speed`.
  * Log: a spiked log of half-length `hx` and radius `hy`, its axis along `rot`, rolling back and
  * forth across that axis: its center runs `range` m either side of (x, y), `speed` rad/s, `phase` rad.
  * Bumper: a round spiked pumpkin of radius `hx` at (x, y) that swells and shrinks at `speed` rad/s.
+ * Hammer: a spiked mallet hinged on the bank HAMMER_ARM m back along `rot`; once per cycle
+ * (`speed` rad/s, `phase` rad) it slams down on the box (x, y, rot, hx, hy) and only hurts there.
+ * Piston: a spiked block of half-extents (hx along `rot`, hy) resting in a bank at (x, y); once
+ * per cycle it punches `range` m out along `rot`, holds, and slides back.
  */
 export type HazardDef = {
   id: string;
-  kind: "spinner" | "sweeper" | "log" | "bumper";
+  kind: "spinner" | "cross" | "sweeper" | "log" | "bumper" | "hammer" | "piston";
   speed: number;
-  /** Log only: how far its center travels either side of (x, y), m. */
+  /** Log: how far its center travels either side of (x, y). Piston: how far it punches out. m. */
   range?: number;
-  /** Log and bumper: where in its cycle the hazard starts, radians. */
+  /** Log, bumper, hammer and piston: where in its cycle the hazard starts, radians. */
   phase?: number;
 } & Box;
 
 /** A stretch of spiked bank, by arc length (m) along the channel's centerline. */
 export type Span = { side: "left" | "right"; from: number; to: number };
 
+/** A stretch of channel by arc length (m) along its centerline. */
+export type Stretch = { from: number; to: number };
+
 /**
  * Most of a course is one winding channel: control points of its centerline and a constant
  * half-width. The banks (colliders and visuals) are derived from it, see sim/channel.ts.
+ * `rapids` are stretches where the water runs at RAPIDS_SPEED.
  */
-export type Channel = { halfWidth: number; points: Vec2[]; spikes: Span[] };
+export type Channel = { halfWidth: number; points: Vec2[]; spikes: Span[]; rapids?: Stretch[] };
 
 export type LevelData = {
   name: string;

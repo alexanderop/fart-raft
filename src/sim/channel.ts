@@ -1,3 +1,4 @@
+import { CURRENT_SPEED, RAPIDS_RAMP, RAPIDS_SPEED } from "./constants.ts";
 import { isIsland } from "./island.ts";
 import type { Box, Channel, LevelData, Vec2 } from "./types.ts";
 
@@ -75,6 +76,23 @@ export function pointAt(samples: readonly Sample[], s: number): Sample {
     s,
   };
 }
+
+/**
+ * How much of the rapids' speed the water has at arc length `s`: 1 inside a stretch of rapids,
+ * 0 in calm water, ramping over RAPIDS_RAMP m at either end.
+ */
+export function rapidsAt(ch: Channel, s: number): number {
+  let w = 0;
+  for (const r of ch.rapids ?? []) {
+    const into = Math.min(s - r.from, r.to - s) / RAPIDS_RAMP + 0.5;
+    w = Math.max(w, Math.min(1, Math.max(0, into)));
+  }
+  return w;
+}
+
+/** How fast the water runs downstream at arc length `s`, m/s. */
+export const flowSpeed = (ch: Channel, s: number): number =>
+  CURRENT_SPEED + (RAPIDS_SPEED - CURRENT_SPEED) * rapidsAt(ch, s);
 
 /** Arc length of the centerline point closest to `p`. */
 export function nearestS(samples: readonly Sample[], p: Vec2): number {

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CURRENT_SPEED } from "../../sim/constants.ts";
+import { CURRENT_SPEED, RAPIDS_SPEED } from "../../sim/constants.ts";
 
 /** Purple Halloween dusk: the fog color, and what the cliffs fade into far below. */
 export const HAZE = 0x4a2f6b;
@@ -49,8 +49,10 @@ export function createSky(): THREE.Mesh {
 
 /**
  * Flat, saturated cartoon water. Vertex colors carry the bank-to-center gradient; the shader
- * adds a faint shimmer and, on a channel (its `aFlow` attribute: arc length, offset across),
+ * adds a faint shimmer and, on a channel (its `aFlow` attribute: arc length, offset across, on),
  * white dashed streaks drifting downstream at the sim's CURRENT_SPEED, so the current shows.
+ * In rapids (`aRapid`, 0..1) the streaks race at RAPIDS_SPEED, crowd together and the water
+ * froths white.
  */
 const STREAK_LANE = 1.7; // m between streak lanes across the stream
 
@@ -66,16 +68,28 @@ export function createWater() {
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
-        "#include <common>\nattribute vec3 aFlow; varying vec3 vWPos; varying vec3 vFlow;",
+        "#include <common>\nattribute vec3 aFlow; attribute float aRapid; varying vec3 vWPos; varying vec3 vFlow; varying float vRapid;",
       )
       .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vFlow = aFlow;",
+        "#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vFlow = aFlow; vRapid = aRapid;",
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nuniform float uTime; varying vec3 vWPos; varying vec3 vFlow;",
+        /* glsl */ `#include <common>
+        uniform float uTime; varying vec3 vWPos; varying vec3 vFlow; varying float vRapid;
+        // Streaks for water running at \`speed\`: lanes \`gap\` m apart across the stream, each a
+        // wobbly dashed line sliding downstream.
+        float streaks(float speed, float gap, float dashes) {
+          float s = vFlow.x - uTime * speed;
+          float lane = floor(vFlow.y / gap + 0.5);
+          float h = fract(sin(lane * 12.9898) * 43758.5453);
+          float wob = vFlow.y + 0.3 * sin(s * 0.5 + lane * 2.1);
+          float line = 1.0 - smoothstep(0.04, 0.1, abs(wob - lane * gap));
+          float ph = fract(s / (dashes * (9.0 + h * 7.0)) + h);
+          return line * smoothstep(0.0, 0.06, ph) * (1.0 - smoothstep(0.3, 0.4, ph));
+        }`,
       )
       .replace(
         "#include <color_fragment>",
@@ -83,17 +97,14 @@ export function createWater() {
         vec2 p = vWPos.xz;
         float rip = sin(p.x * 0.5 + uTime * 0.8) * sin(p.y * 0.45 - uTime * 0.6);
         diffuseColor.rgb += vec3(0.015, 0.025, 0.03) * rip;
-        // Streaks: lanes across the stream, each a wobbly dashed line sliding downstream.
-        float s = vFlow.x - uTime * ${CURRENT_SPEED.toFixed(2)};
-        float lane = floor(vFlow.y / ${STREAK_LANE.toFixed(2)} + 0.5);
-        float h = fract(sin(lane * 12.9898) * 43758.5453);
-        float wob = vFlow.y + 0.3 * sin(s * 0.5 + lane * 2.1);
-        float off = abs(wob - lane * ${STREAK_LANE.toFixed(2)});
-        float line = 1.0 - smoothstep(0.04, 0.1, off);
-        float period = 9.0 + h * 7.0;
-        float ph = fract(s / period + h);
-        float dash = smoothstep(0.0, 0.06, ph) * (1.0 - smoothstep(0.3, 0.4, ph));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 1.0, 0.6), line * dash * vFlow.z * 0.45);`,
+        float calm = streaks(${CURRENT_SPEED.toFixed(2)}, ${STREAK_LANE.toFixed(2)}, 1.0);
+        float fast = streaks(${RAPIDS_SPEED.toFixed(2)}, ${(STREAK_LANE * 0.6).toFixed(2)}, 0.7);
+        // Rapids froth: churning white blotches over brighter water.
+        float froth = smoothstep(0.55, 0.9, sin(p.x * 1.7 + uTime * 5.0) * sin(p.y * 1.9 - uTime * 4.0) * 0.5 + 0.5 + 0.25 * rip);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.95, 0.9), vRapid * 0.3);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 1.0, 0.95), vRapid * froth * 0.35);
+        float streak = mix(calm * 0.45, fast * 0.85, vRapid);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 1.0, 0.6), streak * vFlow.z);`,
       );
   };
   // Open water for courses without a channel; channel courses only use the material.

@@ -1,9 +1,24 @@
-import { Clock, Context, Duration, Effect, Layer, Option, PubSub, Ref, Stream } from "effect";
-import { botSource } from "../src/input/bot.ts";
-import { readSeats, type InputSource } from "../src/input/sources.ts";
-import { FRAME_TICKS, RoomFull, ServerMsg } from "../src/net/protocol.ts";
-import { crewZones, MAX_CREW, TICK_RATE, type Zone } from "../src/sim/constants.ts";
-import { createSim, initPhysics, snapshot, step } from "../src/sim/sim.ts";
+import {
+  Clock,
+  Duration,
+  Effect,
+  Option,
+  PubSub,
+  Ref,
+  Stream,
+  SubscriptionRef,
+  type Scope,
+} from "effect";
+import {
+  FRAME_TICKS,
+  MAX_NAME,
+  RoomFull,
+  ServerMsg,
+  type CourseName,
+  type Roster,
+} from "../src/net/protocol.ts";
+import { crewZones, MAX_CREW, TICK_RATE } from "../src/sim/constants.ts";
+import { createSim, snapshot, step } from "../src/sim/sim.ts";
 import {
   IDLE_INPUT,
   type LevelData,
@@ -12,7 +27,10 @@ import {
   type Snapshot,
 } from "../src/sim/types.ts";
 
-type Seat = { kind: "bot" } | { kind: "human"; input: SeatInput };
+type Human = { kind: "human"; name: string; token: string; joined: number; input: SeatInput };
+type Seat = { kind: "empty" } | Human;
+/** Who drives one rider for a whole race. Matched to a seat by token, so a leaver's rider idles. */
+type Rider = { token: string; name: string };
 
 const NANOS = 1_000_000_000n;
 const RATE = BigInt(TICK_RATE);
@@ -33,97 +51,183 @@ const everyStep = (tick: Effect.Effect<void>) =>
     }
   });
 
-export interface Interface {
-  /** The stream's lifetime is the seat lease: when it ends or is interrupted the seat goes back to a bot. */
-  readonly join: Stream.Stream<ServerMsg, RoomFull>;
-  readonly sendInput: (seat: number, input: SeatInput) => Effect.Effect<void>;
-  readonly restart: () => Effect.Effect<void>;
+export interface Room {
+  readonly code: string;
+  /** The stream's lifetime is the seat lease: when it ends or is interrupted the seat opens up. */
+  readonly join: (name: string) => Stream.Stream<ServerMsg, RoomFull>;
+  readonly sendInput: (token: string, input: SeatInput) => Effect.Effect<void>;
+  /** Only the host's token starts the race; anything else is ignored. */
+  readonly start: (token: string) => Effect.Effect<void>;
+  /** Any seated human: a new race with everyone seated now, spectators included. */
+  readonly restart: (token: string) => Effect.Effect<void>;
+  readonly humans: Effect.Effect<number>;
 }
 
-export class Room extends Context.Service<Room, Interface>()("fart-raft/Room") {}
-
-/** One race: the sim, its bots, and the events not yet broadcast. Effect-free. */
-function newRace(level: LevelData, zones: readonly Zone[]) {
-  const sim = createSim(level, zones);
-  let latest: Snapshot = snapshot(sim);
-  const bots = zones.map((_, i) => botSource(i, zones, level, () => latest));
+/** One race: the sim, the riders it was started with, and the events not yet broadcast. Effect-free. */
+function newRace(level: LevelData, crew: readonly Rider[]) {
+  const sim = createSim(level, crewZones(crew.length));
   let pending: SimEvent[] = [];
 
-  const sourceFor = (seat: Seat, i: number): InputSource =>
-    seat.kind === "human" ? { read: () => seat.input } : bots[i]!;
-
   return {
+    crew,
     /** One fixed tick. Returns the frame to broadcast on every FRAME_TICKS-th tick. */
     tick(table: readonly Seat[]): ServerMsg | undefined {
-      pending.push(...step(sim, readSeats(table.map(sourceFor))));
-      latest = snapshot(sim);
+      // A rider whose human left keeps the race going, idle, until the next restart.
+      const inputs = crew.map((r) => {
+        const seat = table.find((s) => s.kind === "human" && s.token === r.token);
+        return seat?.kind === "human" ? seat.input : IDLE_INPUT;
+      });
+      pending.push(...step(sim, inputs));
+      const latest: Snapshot = snapshot(sim);
       if (latest.tick % FRAME_TICKS !== 0) return undefined;
       const events = pending;
       pending = [];
-      return ServerMsg.cases.Frame.make({
-        snapshot: latest,
-        events,
-        seats: table.map((s) => s.kind),
-      });
+      return ServerMsg.cases.Frame.make({ snapshot: latest, events });
     },
     free: () => sim.world.free(),
   };
 }
+type Race = ReturnType<typeof newRace>;
 
-const make = (level: LevelData) =>
+/** Trimmed, single-spaced, at most MAX_NAME characters; blank becomes "Player N". */
+export function cleanName(raw: string, seat: number): string {
+  const name = raw.replace(/\s+/g, " ").trim().slice(0, MAX_NAME);
+  return name === "" ? `Player ${seat + 1}` : name;
+}
+
+const seatOf = (table: readonly Seat[], token: string) =>
+  table.findIndex((s) => s.kind === "human" && s.token === token);
+
+const hostOf = (seats: readonly Seat[]): number | null => {
+  let host: number | null = null;
+  let since = Infinity;
+  for (const [i, s] of seats.entries()) {
+    if (s.kind === "human" && s.joined < since) [host, since] = [i, s.joined];
+  }
+  return host;
+};
+
+/**
+ * A room starts in the lobby: players join and see each other, nothing is simulated. The host's
+ * Start creates the race with everyone seated as its crew; a mid-race joiner watches until a
+ * restart rebuilds the crew; from then on it ticks at 60 Hz while at least one human is seated.
+ * Physics must be initialised (`initPhysics`) before the race starts. Lives as long as its scope.
+ */
+export const makeRoom = (
+  code: string,
+  course: CourseName,
+  level: LevelData,
+): Effect.Effect<Room, never, Scope.Scope> =>
   Effect.gen(function* () {
-    yield* Effect.promise(initPhysics);
-    // The crew is always full and never changes mid-race: empty seats are bots.
-    const zones = crewZones(MAX_CREW);
-    const seats = yield* Ref.make<readonly Seat[]>(zones.map(() => ({ kind: "bot" })));
-    const race = yield* Ref.make(newRace(level, zones));
+    // No bots online: a race's crew is exactly the humans seated when it starts.
+    const empty: Seat = { kind: "empty" };
+    const seats = yield* Ref.make<readonly Seat[]>(Array.from({ length: MAX_CREW }, () => empty));
+    const race = yield* Ref.make<Race | undefined>(undefined);
+    let joins = 0;
+
+    const rosterOf = (table: readonly Seat[], current: Race | undefined): Roster => ({
+      code,
+      course,
+      seats: table.map((s) => (s.kind === "human" ? s.name : null)),
+      host: hostOf(table),
+      started: current !== undefined,
+      crew: (current?.crew ?? []).map((r) => {
+        const seat = seatOf(table, r.token);
+        return { name: r.name, seat: seat < 0 ? null : seat };
+      }),
+    });
+    const roster = yield* SubscriptionRef.make(rosterOf(yield* Ref.get(seats), undefined));
+    const publishRoster = Effect.gen(function* () {
+      yield* SubscriptionRef.set(roster, rosterOf(yield* Ref.get(seats), yield* Ref.get(race)));
+    });
+
     // Sliding: a slow client loses old frames instead of stalling the room.
     const frames = yield* Effect.acquireRelease(PubSub.sliding<ServerMsg>(4), PubSub.shutdown);
-    yield* Effect.addFinalizer(() => Ref.get(race).pipe(Effect.map((r) => r.free())));
+    yield* Effect.addFinalizer(() => Ref.get(race).pipe(Effect.map((r) => r?.free())));
 
     const tick = Effect.gen(function* () {
-      const frame = (yield* Ref.get(race)).tick(yield* Ref.get(seats));
+      const current = yield* Ref.get(race);
+      const table = yield* Ref.get(seats);
+      // Nobody watching: hold the race where it is until someone comes back.
+      if (!current || !table.some((s) => s.kind === "human")) return;
+      const frame = current.tick(table);
       if (frame) yield* PubSub.publish(frames, frame);
     });
     yield* Effect.forkScoped(everyStep(tick));
 
-    const claimSeat = Ref.modify(seats, (table) => {
-      const free = table.findIndex((s) => s.kind === "bot");
-      return free < 0
-        ? ([Option.none<number>(), table] as const)
-        : ([Option.some(free), table.with(free, { kind: "human", input: IDLE_INPUT })] as const);
-    }).pipe(
-      Effect.flatMap(
-        Option.match({ onNone: () => Effect.fail(new RoomFull()), onSome: Effect.succeed }),
-      ),
-    );
+    /** Everyone seated right now, in seat order. */
+    const crewOf = (table: readonly Seat[]): Rider[] =>
+      table.flatMap((s) => (s.kind === "human" ? [{ token: s.token, name: s.name }] : []));
+
+    const claimSeat = (name: string, token: string) =>
+      Ref.modify(seats, (table) => {
+        const free = table.findIndex((s) => s.kind === "empty");
+        if (free < 0) return [Option.none<number>(), table] as const;
+        const human: Human = {
+          kind: "human",
+          name: cleanName(name, free),
+          token,
+          joined: joins++,
+          input: IDLE_INPUT,
+        };
+        return [Option.some(free), table.with(free, human)] as const;
+      }).pipe(
+        Effect.flatMap(
+          Option.match({ onNone: () => Effect.fail(new RoomFull()), onSome: Effect.succeed }),
+        ),
+        Effect.tap(() => publishRoster),
+      );
 
     const releaseSeat = (seat: number) =>
-      Ref.update(seats, (table) => table.with(seat, { kind: "bot" }));
+      Ref.update(seats, (table) => table.with(seat, empty)).pipe(Effect.andThen(publishRoster));
 
-    const join = Stream.unwrap(
-      Effect.gen(function* () {
-        const seat = yield* Effect.acquireRelease(claimSeat, releaseSeat);
-        const subscription = yield* PubSub.subscribe(frames);
-        return Stream.make(ServerMsg.cases.Welcome.make({ seat, crew: MAX_CREW })).pipe(
-          Stream.concat(Stream.fromSubscription(subscription)),
-        );
-      }),
+    const join = (name: string) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const token = crypto.randomUUID();
+          const seat = yield* Effect.acquireRelease(claimSeat(name, token), releaseSeat);
+          const subscription = yield* PubSub.subscribe(frames);
+          const rosters = SubscriptionRef.changes(roster).pipe(
+            Stream.map((r) => ServerMsg.cases.Roster.make({ roster: r })),
+          );
+          return Stream.make(ServerMsg.cases.Welcome.make({ seat, token })).pipe(
+            Stream.concat(Stream.merge(rosters, Stream.fromSubscription(subscription))),
+          );
+        }),
+      );
+
+    const sendInput = Effect.fn("Room.sendInput")(function* (token: string, input: SeatInput) {
+      // Only a seated human's own token counts: a stray message must not steer anyone else.
+      // A spectator's input is stored too, but no rider reads it until they're in a race.
+      yield* Ref.update(seats, (table) => {
+        const seat = seatOf(table, token);
+        const human = table[seat];
+        return human?.kind === "human" ? table.with(seat, { ...human, input }) : table;
+      });
+    });
+
+    const start = Effect.fn("Room.start")(function* (token: string) {
+      const table = yield* Ref.get(seats);
+      const host = hostOf(table);
+      if (host === null || seatOf(table, token) !== host) return;
+      if ((yield* Ref.get(race)) !== undefined) return;
+      yield* Ref.set(race, newRace(level, crewOf(table)));
+      yield* publishRoster;
+    });
+
+    const restart = Effect.fn("Room.restart")(function* (token: string) {
+      const table = yield* Ref.get(seats);
+      if (seatOf(table, token) < 0) return;
+      const old = yield* Ref.get(race);
+      if (!old) return;
+      yield* Ref.set(race, newRace(level, crewOf(table)));
+      old.free();
+      yield* publishRoster;
+    });
+
+    const humans = Ref.get(seats).pipe(
+      Effect.map((table) => table.filter((s) => s.kind === "human").length),
     );
 
-    const sendInput = Effect.fn("Room.sendInput")(function* (seat: number, input: SeatInput) {
-      // Only a seated human's input counts: a stray message must not steer a bot.
-      yield* Ref.update(seats, (table) =>
-        table[seat]?.kind === "human" ? table.with(seat, { kind: "human", input }) : table,
-      );
-    });
-
-    const restart = Effect.fn("Room.restart")(function* () {
-      const old = yield* Ref.getAndSet(race, newRace(level, zones));
-      old.free();
-    });
-
-    return Room.of({ join, sendInput, restart });
+    return { code, join, sendInput, start, restart, humans };
   });
-
-export const roomLayer = (level: LevelData) => Layer.effect(Room, make(level));

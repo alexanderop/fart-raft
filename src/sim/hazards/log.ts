@@ -5,7 +5,7 @@ import { logCenter } from "./shape.ts";
 
 /**
  * A spiked log rolling back and forth across the channel. Its axis lies along `rot` and it
- * travels sideways, `range` m either side of (x, y). Touching it costs a life.
+ * travels sideways, `range` m either side of (x, y). Touching it wipes the crew out.
  */
 export function createLog(world: RAPIER.World, def: HazardDef): Hazard {
   const start = logCenter(def, 0);
@@ -23,7 +23,7 @@ export function createLog(world: RAPIER.World, def: HazardDef): Hazard {
   return {
     id: def.id,
     body,
-    colliderHandle: collider.handle,
+    colliderHandles: [collider.handle],
     knock: 1,
     update(dt) {
       t += dt;

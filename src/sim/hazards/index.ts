@@ -1,7 +1,9 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
 import type { HazardDef } from "../types.ts";
 import { createBumper } from "./bumper.ts";
+import { createHammer } from "./hammer.ts";
 import { createLog } from "./log.ts";
+import { createPiston } from "./piston.ts";
 import { createSpinner } from "./spinner.ts";
 import { createSweeper } from "./sweeper.ts";
 
@@ -9,8 +11,8 @@ import { createSweeper } from "./sweeper.ts";
 export type Hazard = {
   id: string;
   body: RAPIER.RigidBody;
-  /** The bar's collider: touching it costs the crew a life. */
-  colliderHandle: number;
+  /** Its colliders: touching any of them wipes the crew out. */
+  colliderHandles: number[];
   /** How hard a hit from this hazard throws the raft, relative to a plain bar (1). */
   knock: number;
   update(dt: number): void;
@@ -22,9 +24,12 @@ export type Hazard = {
  */
 const KINDS: Record<HazardDef["kind"], (world: RAPIER.World, def: HazardDef) => Hazard> = {
   spinner: createSpinner,
+  cross: createSpinner,
   sweeper: createSweeper,
   log: createLog,
   bumper: createBumper,
+  hammer: createHammer,
+  piston: createPiston,
 };
 
 export function createHazard(world: RAPIER.World, def: HazardDef): Hazard {

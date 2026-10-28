@@ -1,13 +1,22 @@
 import { RAFT_RADIUS, TICK_RATE } from "../../sim/constants.ts";
 import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
 
-// Everything is synthesized with the Web Audio API: no asset files. The sim never sees this.
+// Everything but the fart is synthesized with the Web Audio API. Farts are recorded CC0 clips
+// (public/sounds, see CREDITS.md), with the old synth fart as fallback until they decode. The sim never sees this.
 
 const MUTE_KEY = "fart-raft:muted";
 const MASTER_GAIN = 0.8;
 const MAX_VOICES = 24;
-/** Base pitch (Hz) of each seat's fart, so players can tell theirs apart. */
-const SEAT_PITCH = [95, 128, 76, 112] as const;
+/** Semitone offset of each seat's fart, so players can tell theirs apart. Seats past the table wrap a whole tone higher. */
+const SEAT_SEMITONES = [0, 5, -4, 3, -2, 7, -6, 1] as const;
+const FART_CLIPS = 12;
+const FART_GAIN = 0.75;
+
+/** Pitch factor for any seat index: 1 = the clip's own pitch. */
+function seatRate(seat: number): number {
+  const lap = Math.floor(seat / SEAT_SEMITONES.length);
+  return 2 ** ((SEAT_SEMITONES[seat % SEAT_SEMITONES.length]! + 2 * lap) / 12);
+}
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
@@ -80,6 +89,8 @@ export function createAudio() {
   let listener = { x: 0, y: 0, heading: 0 };
   let countdownSecond = 0;
   let voices = 0;
+  const clips: AudioBuffer[] = [];
+  let lastClip = -1;
   const lastPlayed = new Map<string, number>();
 
   // ── setup ──────────────────────────────────────────────────────────────
@@ -115,6 +126,22 @@ export function createAudio() {
     tone.connect(compressor);
 
     startAmbience(context, compressor);
+    loadClips(context);
+  }
+
+  /** Fetch and decode the fart clips in the background; each one joins the pool once decoded. */
+  function loadClips(context: AudioContext) {
+    for (let i = 1; i <= FART_CLIPS; i++) {
+      const url = `${import.meta.env.BASE_URL}sounds/fart-${String(i).padStart(2, "0")}.mp3`;
+      fetch(url)
+        .then((res) => {
+          if (!res.ok) throw new Error(`${res.status} ${url}`);
+          return res.arrayBuffer();
+        })
+        .then((data) => context.decodeAudioData(data))
+        .then((buffer) => void clips.push(buffer))
+        .catch((err: unknown) => console.warn("fart clip not usable, keeping the synth fart", err));
+    }
   }
 
   function startAmbience(context: AudioContext, out: AudioNode) {
@@ -206,7 +233,9 @@ export function createAudio() {
   }
 
   // Browsers keep the context suspended until a user gesture: create and resume it on the first one.
-  const gestures = ["pointerdown", "keydown", "touchstart"] as const;
+  // A touch only counts as a user gesture when the finger lifts (pointerup / touchend), which is
+  // what iOS Safari and Android Chrome need to resume audio.
+  const gestures = ["pointerdown", "pointerup", "keydown", "touchstart", "touchend"] as const;
   const onGesture = () => {
     ensureContext();
     if (ctx?.state === "running") for (const g of gestures) removeEventListener(g, onGesture, true);
@@ -251,8 +280,29 @@ export function createAudio() {
 
   function fart(seat: number, pan: number) {
     if (!ctx || !allow(`fart${seat}`, 0.07)) return;
+    if (clips.length > 0) clipFart(ctx, seat, pan);
+    else synthFart(seat, pan);
+  }
+
+  /** A random recorded clip (never the same one twice in a row), pitched per seat with a little jitter. */
+  function clipFart(context: AudioContext, seat: number, pan: number) {
+    let pick = Math.floor(Math.random() * clips.length);
+    if (pick === lastClip && clips.length > 1) pick = (pick + 1) % clips.length;
+    lastClip = pick;
+    const src = context.createBufferSource();
+    src.buffer = clips[pick]!;
+    src.playbackRate.value = seatRate(seat) * rand(0.9, 1.1);
+    const gain = context.createGain();
+    gain.gain.value = FART_GAIN;
+    src.connect(gain).connect(panned(context, pan));
+    src.start();
+    track(src);
+  }
+
+  function synthFart(seat: number, pan: number) {
+    if (!ctx) return;
     const t = ctx.currentTime;
-    const base = SEAT_PITCH[seat % SEAT_PITCH.length]! * rand(0.93, 1.07);
+    const base = 100 * seatRate(seat) * rand(0.93, 1.07);
     const length = rand(0.26, 0.42);
     const out = panned(ctx, pan);
 
@@ -309,8 +359,8 @@ export function createAudio() {
     track(thud);
   }
 
-  function lifeLost() {
-    if (!ctx || !allow("lifeLost", 0.4)) return;
+  function hit() {
+    if (!ctx || !allow("hit", 0.4)) return;
     const t = ctx.currentTime;
     const thud = osc(ctx, "sine", t, 0.4, 110, 32);
     thud.connect(envelope(ctx, t, 1, 0.003, 0.4, sfx));
@@ -334,33 +384,13 @@ export function createAudio() {
     track(thud);
   }
 
-  /** Sad trombone: descending notes through a wah filter, the last one sags. */
-  function died() {
-    if (!ctx || !allow("died", 1)) return;
+  /** Back at the gate: a quick rising "bloop", like popping up out of the water. */
+  function respawn() {
+    if (!ctx || !allow("respawn", 0.3)) return;
     const t = ctx.currentTime;
-    const notes: readonly [number, number, number][] = [
-      [midi(62), 0, 0.42],
-      [midi(61), 0.46, 0.42],
-      [midi(60), 0.92, 0.42],
-      [midi(58), 1.38, 1.3],
-    ];
-    for (const [i, [freq, offset, length]] of notes.entries()) {
-      const start = t + offset;
-      const last = i === notes.length - 1;
-      const o = osc(ctx, "sawtooth", start, length, freq, last ? freq * 0.82 : freq);
-      const vibrato = osc(ctx, "sine", start, length, last ? 6 : 1);
-      const vibratoDepth = ctx.createGain();
-      vibratoDepth.gain.value = last ? 7 : 0;
-      vibrato.connect(vibratoDepth).connect(o.frequency);
-      const wah = ctx.createBiquadFilter();
-      wah.type = "lowpass";
-      wah.Q.value = 5;
-      wah.frequency.setValueAtTime(350, start);
-      wah.frequency.exponentialRampToValueAtTime(1400, start + length * 0.4);
-      wah.frequency.exponentialRampToValueAtTime(400, start + length);
-      o.connect(wah).connect(envelope(ctx, start, 0.45, 0.04, length, sfx));
-      if (last) track(o);
-    }
+    const o = osc(ctx, "sine", t, 0.22, midi(55), midi(79));
+    o.connect(envelope(ctx, t, 0.35, 0.01, 0.22, sfx));
+    track(o);
   }
 
   /** Spooky chime: a bell (inharmonic partials) with an echo tail. */
@@ -456,11 +486,11 @@ export function createAudio() {
         case "bump":
           bump(e.speed);
           break;
-        case "lifeLost":
-          lifeLost();
+        case "hit":
+          hit();
           break;
-        case "died":
-          died();
+        case "respawn":
+          respawn();
           break;
         case "checkpoint":
           checkpoint();
@@ -495,6 +525,8 @@ export function createAudio() {
       return muted;
     },
     isMuted: () => muted,
+    /** Decoded fart clips so far (0 means the synth fart plays). */
+    clips: () => clips.length,
     /** "none" until the first user gesture creates the context. */
     state: (): AudioContextState | "none" => ctx?.state ?? "none",
   };

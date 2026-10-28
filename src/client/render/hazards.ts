@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { bumperRadius } from "../../sim/hazards/shape.ts";
+import { bumperRadius, hammerLift, hammerPivot, pistonOut } from "../../sim/hazards/shape.ts";
 import type { HazardDef, Pose } from "../../sim/types.ts";
 import { applyPose } from "./coords.ts";
 import type { Kit } from "./kit.ts";
@@ -18,9 +18,13 @@ export type HazardView = {
 const LOG_HALF = 2.4;
 /** A bumper floats and bobs this high (m) and this fast (relative to its pulse). */
 const BOB = 0.08;
+/** `hammer` in the kit: its head's half-length across the arm, scaled to the smash zone's hy. */
+const HAMMER_HALF = 1.5;
+/** The piston's ram reaches this far (m) behind the head when it rests, into the bank. */
+const ROD_REST = 0.6;
 
 export function createHazardView(kit: Kit, def: HazardDef): HazardView {
-  const mesh = kit.clone(def.kind);
+  const mesh = kit.clone(def.kind === "cross" ? "spinner" : def.kind);
   switch (def.kind) {
     case "spinner":
       mesh.scale.set(def.hx, def.hy, def.hy);
@@ -28,6 +32,45 @@ export function createHazardView(kit: Kit, def: HazardDef): HazardView {
         root: mesh,
         update: (pose) => applyPose(mesh, pose, def.hy),
       };
+    case "cross": {
+      // Two spinner bars on one hub, the second square to the first.
+      const holder = new THREE.Group();
+      const second = kit.clone("spinner");
+      second.rotation.y = Math.PI / 2;
+      for (const bar of [mesh, second]) {
+        bar.scale.set(def.hx, def.hy, def.hy);
+        holder.add(bar);
+      }
+      return { root: holder, update: (pose) => applyPose(holder, pose, def.hy) };
+    }
+    case "hammer": {
+      // The post stands on the bank; the arm swings up about its axle by the shared schedule.
+      const holder = new THREE.Group();
+      holder.add(kit.clone("hammer_post"), mesh);
+      mesh.scale.z = def.hy / HAMMER_HALF;
+      applyPose(holder, { ...hammerPivot(def), rot: def.rot });
+      return {
+        root: holder,
+        update(_, t) {
+          mesh.rotation.z = hammerLift(def, t);
+        },
+      };
+    }
+    case "piston": {
+      // The head follows the sim pose; the ram behind it stretches back to where it rests.
+      const holder = new THREE.Group();
+      const rod = kit.clone("piston_rod");
+      mesh.scale.set(def.hx, 1, def.hy); // three z is across: the sim's y
+      rod.position.x = -def.hx;
+      holder.add(mesh, rod);
+      return {
+        root: holder,
+        update(pose, t) {
+          applyPose(holder, pose);
+          rod.scale.x = (def.range ?? 0) * pistonOut(def, t) + ROD_REST;
+        },
+      };
+    }
     case "sweeper":
       mesh.scale.set(def.hx, 1, 1);
       return { root: mesh, update: (pose) => applyPose(mesh, pose) };

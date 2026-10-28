@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { STEP, type Zone } from "../../sim/constants.ts";
+import { crewZones, STEP } from "../../sim/constants.ts";
 import type { LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
 import { applyPose, lerpPose } from "./coords.ts";
 import { createSky, createWater, HAZE } from "./env.ts";
@@ -10,6 +10,7 @@ import { createRaftMotion } from "./raftMotion.ts";
 import { createRiderAnimator } from "./riders.ts";
 import { buildTerrain } from "./terrain.ts";
 import { createZoneMarks } from "./zones.ts";
+import { createPixelRatioGovernor, detectQuality } from "./quality.ts";
 
 export type SceneView = {
   renderer: THREE.WebGLRenderer;
@@ -22,20 +23,35 @@ export type SceneView = {
 
 const SUN_OFFSET = new THREE.Vector3(22, 40, 12);
 
-export async function createScene(
-  canvasHost: HTMLElement,
-  level: LevelData,
-  zones: readonly Zone[],
-): Promise<SceneView> {
+/** Frees a zone-marks group's GPU buffers. */
+function disposeMarks(group: THREE.Object3D): void {
+  group.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.geometry.dispose();
+    (o.material as THREE.Material).dispose();
+  });
+}
+
+/** The crew size is read from each snapshot (`riders.length`), so a restart may change it. */
+export async function createScene(canvasHost: HTMLElement, level: LevelData): Promise<SceneView> {
   const kit = await loadKit();
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const quality = detectQuality();
+  const renderer = new THREE.WebGLRenderer({
+    antialias: quality.antialias,
+    powerPreference: "high-performance",
+  });
+  const governor = createPixelRatioGovernor(
+    Math.min(devicePixelRatio, quality.maxPixelRatio),
+    quality.minPixelRatio,
+  );
+  renderer.setPixelRatio(governor.ratio);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.domElement.classList.add("game-canvas");
   canvasHost.append(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -46,7 +62,7 @@ export async function createScene(
 
   const sun = new THREE.DirectionalLight(0xd6dcff, 1.5);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
   const cam = sun.shadow.camera;
   cam.left = cam.bottom = -30;
   cam.right = cam.top = 30;
@@ -70,21 +86,45 @@ export async function createScene(
   );
 
   const raft = kit.clone("raft");
-  raft.add(createZoneMarks(zones));
   scene.add(raft);
+  let marks: THREE.Group | undefined;
+  let markedCrew = -1;
+  /** Seat colors on the ring for `crew` riders, rebuilt whenever the crew size changes. */
+  const markCrew = (crew: number) => {
+    if (crew === markedCrew) return;
+    markedCrew = crew;
+    if (marks) {
+      raft.remove(marks);
+      disposeMarks(marks);
+    }
+    marks = createZoneMarks(crewZones(crew));
+    raft.add(marks);
+  };
 
-  const riders = createRiderAnimator(raft, level, zones.length);
+  const riders = createRiderAnimator(raft, level);
   const motion = createRaftMotion(raft);
   const chase = createChaseCamera(level);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 700);
   let lastDraw = performance.now() / 1000;
 
+  // The canvas is CSS-sized to the viewport (`.game-canvas`), so its box already follows
+  // rotation and the iOS address bar: size the drawing buffer from it.
+  let width = 0;
+  let height = 0;
   const resize = () => {
-    renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth / innerHeight;
+    const canvas = renderer.domElement;
+    const w = canvas.clientWidth || innerWidth;
+    const h = canvas.clientHeight || innerHeight;
+    if (w === width && h === height) return;
+    width = w;
+    height = h;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };
+  new ResizeObserver(resize).observe(renderer.domElement);
   addEventListener("resize", resize);
+  visualViewport?.addEventListener("resize", resize);
   resize();
 
   return {
@@ -99,9 +139,14 @@ export async function createScene(
     },
     draw(prev, curr, alpha, shake) {
       const now = performance.now() / 1000;
+      const lowered = governor.frame((now - lastDraw) * 1000);
+      if (lowered !== undefined) {
+        renderer.setPixelRatio(lowered); // also resizes the drawing buffer
+      }
       const dt = Math.min(0.05, Math.max(0.001, now - lastDraw));
       lastDraw = now;
       const pose = lerpPose(prev.raft, curr.raft, alpha);
+      markCrew(curr.riders.length);
       applyPose(raft, pose);
       motion.update(dt, now, prev, curr, pose);
       riders.update(dt, now, prev, curr, alpha, pose);

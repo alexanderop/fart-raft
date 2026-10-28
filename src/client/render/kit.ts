@@ -63,6 +63,25 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
     m.rotation.z = Math.PI / 2;
     return group(m);
   },
+  // Arm along +x from the axle (origin, 1.2 up) to a drum 6 m out, modelled down.
+  hammer: () => {
+    const arm = mesh(new THREE.BoxGeometry(6, 0.4, 0.4), 0x3b2736, 1.2);
+    arm.position.x = 3;
+    const head = mesh(new THREE.CylinderGeometry(1.2, 1.2, 3, 16), 0x7b2fb0, 1.2);
+    head.rotation.x = Math.PI / 2;
+    head.position.x = 6;
+    return group(arm, head);
+  },
+  hammer_post: () => group(mesh(new THREE.BoxGeometry(1, 1.8, 2.2), 0x5a2d82, 0.9)),
+  // Half-extents 1 × 1, 1.4 tall: scaled (hx, hy, 1).
+  piston: () => group(mesh(new THREE.BoxGeometry(2, 1.4, 2), 0x7b2fb0, 0.7)),
+  // 1 m along −x: stretched to the bank.
+  piston_rod: () => {
+    const m = mesh(new THREE.CylinderGeometry(0.3, 0.3, 1, 10), 0xe9dfc4, 0.7);
+    m.rotation.z = Math.PI / 2;
+    m.position.x = -0.5;
+    return group(m);
+  },
   // Radius 1, scaled uniformly by the bumper's radius.
   bumper: () => group(mesh(new THREE.SphereGeometry(0.9, 14, 10), 0xf5821f, 0.9)),
   gate_post: () => group(mesh(new THREE.BoxGeometry(0.4, 8.5, 0.4), 0xedb040, 4.25)),

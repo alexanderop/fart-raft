@@ -45,7 +45,6 @@ describe("given a sim that has raced for four seconds", () => {
         _tag: "Frame" as const,
         snapshot: snap,
         events,
-        seats: ["human" as const, "bot" as const, "bot" as const, "bot" as const],
       };
       expect(overTheWire(ServerMsg, frame)).toEqual(frame);
     });

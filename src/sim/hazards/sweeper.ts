@@ -17,7 +17,7 @@ export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
   return {
     id: def.id,
     body,
-    colliderHandle: collider.handle,
+    colliderHandles: [collider.handle],
     knock: 1,
     update(dt) {
       t += dt;

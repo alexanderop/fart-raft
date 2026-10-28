@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { sampleChannel, type Sample } from "../../sim/channel.ts";
+import { rapidsAt, sampleChannel, type Sample } from "../../sim/channel.ts";
 import { isIsland, islandRadius } from "../../sim/island.ts";
 import type { Box, Channel, LevelData, Pose, SimEvent } from "../../sim/types.ts";
 import { applyPose, poseMatrix } from "./coords.ts";
@@ -137,6 +137,13 @@ function buildChannel(ch: Channel, kit: Kit, water: THREE.Material, rand: () => 
     new THREE.Float32BufferAttribute(
       across.flatMap((u) => samples.flatMap((p) => [p.s, u * (hw + WATER_MARGIN), 1])),
       3,
+    ),
+  );
+  stream.geometry.setAttribute(
+    "aRapid",
+    new THREE.Float32BufferAttribute(
+      across.flatMap(() => samples.map((p) => rapidsAt(ch, p.s))),
+      1,
     ),
   );
   stream.receiveShadow = true;

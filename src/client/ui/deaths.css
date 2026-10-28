@@ -1,0 +1,113 @@
+/* Death counter pill and the hurt flash. Kept apart from style.css on purpose. */
+
+.hud-deaths {
+  position: absolute;
+  top: calc(12px + var(--safe-t, 0px));
+  left: calc(12px + var(--safe-l, 0px));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 5px 10px;
+  border-radius: 0 0 16px 16px;
+  background: #2b3441;
+  box-shadow: 0 3px 0 rgb(0 0 0 / 0.25);
+  font-size: 24px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-stroke: 0;
+}
+
+.hud-deaths.hit {
+  animation: deaths-shake 0.5s;
+}
+
+.skull {
+  width: 26px;
+  height: 26px;
+}
+
+.skull .bone {
+  fill: #f4efe6;
+  stroke: var(--outline, #2a1440);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.skull .eye {
+  fill: var(--outline, #2a1440);
+}
+
+.skull .teeth {
+  fill: none;
+  stroke: var(--outline, #2a1440);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+@media (max-width: 480px), (max-height: 480px) {
+  .hud-deaths {
+    padding: 3px 10px 4px 8px;
+    font-size: 19px;
+  }
+
+  .skull {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.finish-deaths {
+  font-size: 24px;
+  font-weight: 800;
+  -webkit-text-stroke: 4px var(--outline, #2a1440);
+}
+
+.hud-hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgb(214 40 40 / 0.65) 100%);
+}
+
+.hud-hurt.on {
+  animation: hurt-flash 0.7s ease-out;
+}
+
+@keyframes deaths-shake {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  15% {
+    translate: -7px 2px;
+    rotate: -4deg;
+  }
+  35% {
+    translate: 6px -2px;
+    rotate: 3deg;
+  }
+  55% {
+    translate: -4px 1px;
+    rotate: -2deg;
+  }
+  75% {
+    translate: 3px 0;
+    rotate: 1deg;
+  }
+}
+
+@keyframes hurt-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-deaths.hit,
+  .hud-hurt.on {
+    animation: none;
+  }
+}

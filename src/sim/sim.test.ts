@@ -1,13 +1,16 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import canyon from "../../courses/canyon.json";
 import pond from "../../courses/pond.json";
-import { nearestS, pointAt, sampleChannel } from "./channel.ts";
+import { flowSpeed, nearestS, pointAt, rapidsAt, sampleChannel } from "./channel.ts";
 import {
   COUNTDOWN_TICKS,
   crewZones,
+  CURRENT_SPEED,
   FART_TICKS,
   INVULNERABLE_TICKS,
-  LIVES,
+  RAPIDS_SPEED,
+  RESPAWN_BACK,
+  RESPAWN_TICKS,
   MAX_CREW,
   RIDER_RING,
   TICK_RATE,
@@ -18,7 +21,7 @@ import { parseLevel } from "./level.ts";
 import { IDLE_INPUT, type LevelData, type SeatInput, type SimEvent } from "./types.ts";
 
 const level = parseLevel(pond);
-const FULL = crewZones(MAX_CREW);
+const FULL = crewZones(4);
 const STAND = { x: 0, y: 0 };
 const fart: SeatInput = { move: STAND, fart: true };
 const rearFart: SeatInput[] = [fart, fart, IDLE_INPUT, IDLE_INPUT];
@@ -121,6 +124,57 @@ describe("given the pond course", () => {
     });
   });
 
+  describe("given a crew bigger than four", () => {
+    const EIGHT = crewZones(MAX_CREW);
+    const BACK: SeatInput = { move: { x: -1, y: 0 }, fart: false };
+    /**
+     * Everyone slides to the back of their arc during the countdown; after GO, every rider behind
+     * the middle farts once. How far straight ahead does the raft get?
+     */
+    const fullAhead = (zones: readonly Zone[]) => {
+      const sim = createSim(level, zones);
+      for (let t = 0; t < COUNTDOWN_TICKS + 90; t++) {
+        const riders = snapshot(sim).riders;
+        step(
+          sim,
+          zones.map((_, i) => ({ ...BACK, fart: t === COUNTDOWN_TICKS && riders[i]!.x < -0.1 })),
+        );
+      }
+      return snapshot(sim).raft.x - level.spawn.x;
+    };
+
+    it.each([5, 6, 7, 8])("should split the ring into %i balanced arcs that tile it", (n) => {
+      const zones = crewZones(n);
+      expect(zones.reduce((sum, z) => sum + 2 * z.half, 0)).toBeCloseTo(2 * Math.PI);
+      expect(zones.reduce((sum, z) => sum + Math.cos(z.center), 0)).toBeCloseTo(0);
+      expect(zones.reduce((sum, z) => sum + Math.sin(z.center), 0)).toBeCloseTo(0);
+    });
+
+    describe.each([5, 6, 7, 8])("when a crew of %i gives its hardest push forward", (n) => {
+      it("should push about as hard as a crew of four, not harder", () => {
+        const ratio = fullAhead(crewZones(n)) / fullAhead(FULL);
+        expect(ratio).toBeGreaterThan(0.85);
+        expect(ratio).toBeLessThan(1.05);
+      });
+    });
+
+    describe("when every rider of eight pushes the stick the same way for a long time", () => {
+      it("should keep each rider on its own eighth of the ring", () => {
+        const { snap } = run(
+          600,
+          (t) => EIGHT.map(() => ({ move: { x: Math.cos(t / 50), y: 1 }, fart: false })),
+          EIGHT,
+        );
+        snap.riders.forEach((r, i) => {
+          const zone = EIGHT[i]!;
+          const off = wrap(Math.atan2(r.y, r.x) - zone.center);
+          expect(Math.abs(off)).toBeLessThanOrEqual(zone.half);
+          expect(Math.hypot(r.x, r.y)).toBeCloseTo(RIDER_RING);
+        });
+      });
+    });
+  });
+
   // Multiplayer depends on this: the same inputs must give the same world.
   it("should be deterministic for the same inputs", () => {
     const a = run(900, wobble).snap;
@@ -164,7 +218,13 @@ describe("given the canyon course", () => {
 
   describe("when the rear riders fart the raft straight into the first bend", () => {
     it("should keep the raft inside the banks", () => {
-      const sim = createSim(canyonLevel, FULL);
+      // Plain banks and no hazards: a hit would wipe the crew out and send it back to the start.
+      const plain = {
+        ...canyonLevel,
+        hazards: [],
+        channel: { ...canyonLevel.channel!, spikes: [] },
+      };
+      const sim = createSim(plain, FULL);
       for (let t = 0; t < COUNTDOWN_TICKS + 12 * 60; t++) step(sim, rearFart);
       const { raft } = snapshot(sim);
       const route = sampleChannel(canyonLevel.channel!);
@@ -221,14 +281,14 @@ function ram(course: LevelData, ticks: number) {
   return { sim, log, snap: snapshot(sim) };
 }
 
-const lost = (log: Logged[]) =>
-  log.flatMap((l) => (l.event.type === "lifeLost" ? [{ tick: l.tick, lives: l.event.lives }] : []));
+const hits = (log: Logged[]) =>
+  log.flatMap((l) => (l.event.type === "hit" ? [{ tick: l.tick, deaths: l.event.deaths }] : []));
 const count = (log: Logged[], type: SimEvent["type"]) =>
   log.filter((l) => l.event.type === type).length;
 
-describe("given a crew with lives", () => {
-  it("should start the race with every life", () => {
-    expect(run(1, () => rearFart).snap.lives).toBe(LIVES);
+describe("given a crew that can wipe out", () => {
+  it("should start the race with no wipeouts", () => {
+    expect(run(1, () => rearFart).snap.deaths).toBe(0);
   });
 
   describe("when the raft rams a hazard bar", () => {
@@ -237,14 +297,38 @@ describe("given a crew with lives", () => {
       rammed = ram(barLevel, COUNTDOWN_TICKS + 6 * TICK_RATE);
     });
 
-    it("should lose a life and say so", () => {
-      expect(lost(rammed.log)[0]?.lives).toBe(LIVES - 1);
-      expect(rammed.snap.lives).toBeLessThan(LIVES);
+    it("should count the wipeout and say so", () => {
+      expect(hits(rammed.log)[0]?.deaths).toBe(1);
+      expect(rammed.snap.deaths).toBeGreaterThanOrEqual(1);
     });
 
-    it("should be thrown back by the hit", () => {
-      expect(lost(rammed.log)).toHaveLength(1); // the knock sends the raft away from the bar
-      expect(rammed.snap.raft.x).toBeLessThan(barLevel.hazards[0]!.x - 4);
+    it("should respawn at the start, dead still, after the tumble", () => {
+      const hit = hits(rammed.log)[0]!;
+      const back = rammed.log.find((l) => l.event.type === "respawn")!;
+      expect(back.tick - hit.tick).toBe(RESPAWN_TICKS);
+      expect(back.event).toMatchObject({ x: barLevel.spawn.x, y: barLevel.spawn.y });
+    });
+
+    it("should keep the race and its clock running", () => {
+      expect(rammed.snap.phase.kind).toBe("racing");
+    });
+  });
+
+  describe("when the crew is wiped out", () => {
+    it("should ignore every input until it respawns", () => {
+      const { sim, log } = ram(barLevel, COUNTDOWN_TICKS + 6 * TICK_RATE);
+      sim.world.free();
+      const hitTick = hits(log)[0]!.tick;
+      // Replay up to the hit, then walk and fart through the tumble.
+      const again = createSim(barLevel, FULL);
+      for (let t = 0; t <= hitTick; t++) step(again, rearFart);
+      const before = snapshot(again);
+      const events: SimEvent[] = [];
+      const walkAndFart = FULL.map(() => ({ move: { x: 0, y: 1 }, fart: true }));
+      for (let t = 0; t < RESPAWN_TICKS - 1; t++) events.push(...step(again, walkAndFart));
+      expect(events.some((e) => e.type === "fart")).toBe(false);
+      expect(snapshot(again).riders).toEqual(before.riders);
+      again.world.free();
     });
   });
 
@@ -254,42 +338,35 @@ describe("given a crew with lives", () => {
       pressed = ram(jamLevel, COUNTDOWN_TICKS + 20 * TICK_RATE);
     });
 
-    it("should stay safe for the whole grace window after each hit", () => {
-      const [first, second] = lost(pressed.log);
-      expect(second!.tick - first!.tick).toBeGreaterThanOrEqual(INVULNERABLE_TICKS);
+    it("should wipe out again only after the tumble and the grace window", () => {
+      const [first, second] = hits(pressed.log);
+      expect(second!.tick - first!.tick).toBeGreaterThanOrEqual(RESPAWN_TICKS + INVULNERABLE_TICKS);
     });
 
-    it("should lose one life per grace window until none are left", () => {
-      const hits = lost(pressed.log);
-      expect(hits.map((h) => h.lives)).toEqual([2, 1, 0]);
-      hits.slice(1).forEach((h, i) => {
-        expect(h.tick - hits[i]!.tick).toBeGreaterThanOrEqual(INVULNERABLE_TICKS);
-      });
-    });
-
-    it("should end the race in the dead phase", () => {
-      expect(pressed.snap.lives).toBe(0);
-      expect(pressed.snap.phase.kind).toBe("dead");
-      expect(count(pressed.log, "died")).toBe(1);
+    it("should count every wipeout and never end the race", () => {
+      expect(hits(pressed.log).map((h) => h.deaths)).toEqual(
+        hits(pressed.log).map((_, i) => i + 1),
+      );
+      expect(pressed.snap.phase.kind).toBe("racing");
       expect(count(pressed.log, "finished")).toBe(0);
     });
+  });
 
-    it("should ignore every input once dead", () => {
-      const before = snapshot(pressed.sim);
-      const events: SimEvent[] = [];
-      const walkAndFart = FULL.map(() => ({ move: { x: 0, y: 1 }, fart: true }));
-      for (let t = 0; t < 120; t++) events.push(...step(pressed.sim, walkAndFart));
-      const after = snapshot(pressed.sim);
-      expect(events.some((e) => e.type === "fart")).toBe(false);
-      expect(after.riders).toEqual(before.riders);
-      expect(after.gas).toEqual(before.gas);
-      expect(after.phase.kind).toBe("dead");
-      expect(after.lives).toBe(0);
+  describe("when the raft has passed a gate", () => {
+    it("should respawn just upstream of that gate", () => {
+      const gated: LevelData = {
+        ...barLevel,
+        checkpoints: [{ x: 8, y: 0, rot: 0, hx: 0.5, hy: 6 }, ...barLevel.checkpoints],
+      };
+      const { log } = ram(gated, COUNTDOWN_TICKS + 6 * TICK_RATE);
+      expect(count(log, "checkpoint")).toBe(1);
+      const back = log.find((l) => l.event.type === "respawn");
+      expect(back?.event).toMatchObject({ x: 8 - RESPAWN_BACK, y: 0 });
     });
   });
 
   describe("when the raft bumps a plain bank", () => {
-    it("should keep every life", () => {
+    it("should not wipe out", () => {
       // Front riders push the raft backward into the pond's plain back wall.
       const frontFart: SeatInput[] = [IDLE_INPUT, IDLE_INPUT, fart, fart];
       const sim = createSim(level, FULL);
@@ -297,13 +374,13 @@ describe("given a crew with lives", () => {
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++)
         events.push(...step(sim, frontFart));
       expect(events.some((e) => e.type === "bump")).toBe(true);
-      expect(events.some((e) => e.type === "lifeLost")).toBe(false);
-      expect(snapshot(sim).lives).toBe(LIVES);
+      expect(events.some((e) => e.type === "hit")).toBe(false);
+      expect(snapshot(sim).deaths).toBe(0);
     });
   });
 
   describe("when the raft rams a spiked bank", () => {
-    it("should lose a life", () => {
+    it("should wipe out", () => {
       const canyonLevel = parseLevel(canyon);
       const spiked: LevelData = {
         ...canyonLevel,
@@ -317,13 +394,63 @@ describe("given a crew with lives", () => {
         },
       };
       const { log } = ram(spiked, COUNTDOWN_TICKS + 20 * TICK_RATE);
-      expect(count(log, "lifeLost")).toBeGreaterThanOrEqual(1);
+      expect(count(log, "hit")).toBeGreaterThanOrEqual(1);
     });
   });
 
   describe("when the countdown has not finished", () => {
-    it("should not cost a life", () => {
-      expect(ram(barLevel, COUNTDOWN_TICKS - 1).snap.lives).toBe(LIVES);
+    it("should not wipe out", () => {
+      expect(ram(barLevel, COUNTDOWN_TICKS - 1).snap.deaths).toBe(0);
     });
+  });
+});
+
+describe("given a straight channel with rapids", () => {
+  // 200 m straight east, rapids from 60 m to 140 m.
+  const straight: LevelData = {
+    name: "rapids",
+    spawn: { x: 0, y: 0, rot: 0 },
+    channel: {
+      halfWidth: 7,
+      points: [
+        { x: -6, y: 0 },
+        { x: 200, y: 0 },
+      ],
+      spikes: [],
+      rapids: [{ from: 66, to: 146 }],
+    },
+    walls: [],
+    checkpoints: [{ x: 195, y: 0, rot: 0, hx: 0.5, hy: 6.7 }],
+    hazards: [],
+  };
+
+  it("should ramp the water's speed up into the rapids and down after them", () => {
+    const ch = straight.channel!;
+    expect(rapidsAt(ch, 30)).toBe(0);
+    expect(rapidsAt(ch, 66)).toBeCloseTo(0.5);
+    expect(rapidsAt(ch, 100)).toBe(1);
+    expect(flowSpeed(ch, 100)).toBe(RAPIDS_SPEED);
+    expect(flowSpeed(ch, 180)).toBe(CURRENT_SPEED);
+  });
+
+  describe("when nobody farts", () => {
+    it("should carry the raft through the rapids far faster than the calm water", () => {
+      const sim = createSim(straight, FULL);
+      const idle = FULL.map(() => IDLE_INPUT);
+      const xAt: number[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 40 * TICK_RATE; t++) {
+        step(sim, idle);
+        xAt.push(snapshot(sim).raft.x);
+      }
+      // Seconds the raft took over 10 m of calm water, and over 10 m of rapids.
+      const time = (from: number) =>
+        (xAt.findIndex((x) => x >= from + 10) - xAt.findIndex((x) => x >= from)) / TICK_RATE;
+      expect(time(100)).toBeLessThan(time(20) / 2);
+    });
+  });
+
+  it("should reject rapids that are not stretches", () => {
+    const broken = { ...straight, channel: { ...straight.channel, rapids: [{ from: "here" }] } };
+    expect(() => parseLevel(broken)).toThrow(/bad channel/);
   });
 });

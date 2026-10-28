@@ -1,5 +1,5 @@
 import { CURRENT_SPEED, RAFT_HULL, STEP, TICK_RATE, type Zone } from "../sim/constants.ts";
-import { hazardBox } from "../sim/hazards/shape.ts";
+import { hazardBoxes as boxesOf } from "../sim/hazards/shape.ts";
 import { clampToZone } from "../sim/raft.ts";
 import { levelWalls, pointAt, sampleChannel } from "../sim/channel.ts";
 import {
@@ -33,7 +33,7 @@ export type BotTuning = {
 
 /** Picked by sweeping crews of 1–4 on the pond: every crew finishes, the slowest in ≈ 45 s. */
 export const DEFAULT_TUNING: BotTuning = {
-  cruise: 7,
+  cruise: 9,
   avoidRange: 3,
   avoidLookahead: 0.7,
   hazardRange: 6,
@@ -64,7 +64,7 @@ const REPLAN_TICKS = 5;
  * A raft coasts to a halt in still water but a current keeps it moving, so a crawl there is
  * faster than the current. Backing off is slower than going ahead.
  */
-const PACE_FAST = 4.2;
+const PACE_FAST = 7;
 const PACE_CRAWL = 1.5;
 const PACE_BACK = -1.5;
 
@@ -84,7 +84,7 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 function hazardBoxes(level: LevelData, snap: Snapshot, except: readonly string[] = []): Box[] {
   return level.hazards
     .filter((h) => !except.includes(h.id))
-    .map((h) => hazardBox(h, snap.tick * STEP));
+    .flatMap((h) => boxesOf(h, snap.tick * STEP));
 }
 
 /** Is the lane `lat` free of rocks and banks for `until` metres ahead of arc length `s`? */
@@ -224,9 +224,19 @@ export function botSource(
   return {
     read(): SeatInput {
       const snap = observe();
-      const prev = last?.tick === snap.tick - 1 ? last : undefined;
+      // The tick before a respawn is the far side of a teleport: no use for a velocity.
+      const prev = last?.tick === snap.tick - 1 && last.respawnIn === 0 ? last : undefined;
       last = snap;
       if (snap.phase.kind !== "racing") return IDLE_INPUT;
+      // Wiped out: nothing to do until the raft is back at its gate, then start over from there.
+      if (snap.respawnIn > 0) {
+        crossing = null;
+        plannedAt = -Infinity;
+        bestS = -Infinity;
+        progressAt = snap.tick;
+        goUntil = slowFor = escapeLeft = 0;
+        return IDLE_INPUT;
+      }
       const gate = level.checkpoints[snap.phase.nextCheckpoint];
       const rider = snap.riders[seatIndex];
       if (!gate || !rider) return IDLE_INPUT;
@@ -275,9 +285,11 @@ export function botSource(
           ? pointAt(route, here.s + ROUTE_LOOKAHEAD)
           : gate;
 
-      // Stuck against a rock or bank: steering toward the gate keeps pinning us there.
+      // Stuck against a rock or bank: steering toward the gate keeps pinning us there. A crew
+      // holding still on purpose, waiting for a hazard to come round, is not stuck.
+      const waiting = plan !== null && plan.holdFor > 0 && Math.abs(plan.pace) < STUCK_SPEED;
       if (escapeLeft > 0) escapeLeft -= STEP;
-      else if (prev && Math.hypot(vel.x, vel.y) < STUCK_SPEED) {
+      else if (prev && !waiting && Math.hypot(vel.x, vel.y) < STUCK_SPEED) {
         slowFor += STEP;
         if (slowFor > STUCK_AFTER) {
           escapeLeft = ESCAPE_FOR;

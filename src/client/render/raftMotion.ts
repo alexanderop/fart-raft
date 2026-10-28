@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { STEP } from "../../sim/constants.ts";
 import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import { jumped } from "./coords.ts";
 import { clamp, damp, spring, stepSpring, wrapAngle } from "./spring.ts";
 
 /**
@@ -51,7 +52,7 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
     vel,
     onEvent(e, now) {
       if (e.type === "fart") lastFart[e.seat] = now;
-      if (e.type === "lifeLost") {
+      if (e.type === "hit") {
         // The hit throws the raft along (dirX, dirY): in its own frame, +x forward, +y left.
         const c = Math.cos(lastRot);
         const s = Math.sin(lastRot);
@@ -78,9 +79,10 @@ export function createRaftMotion(raft: THREE.Object3D): RaftMotion {
       lastTick = curr.tick;
       lastRot = pose.rot;
 
-      // Velocity and yaw rate from the last two sim ticks.
-      const vx = (curr.raft.x - prev.raft.x) / STEP;
-      const vy = (curr.raft.y - prev.raft.y) / STEP;
+      // Velocity and yaw rate from the last two sim ticks; a respawn's jump is no speed at all.
+      const respawned = jumped(prev.raft, curr.raft);
+      const vx = respawned ? 0 : (curr.raft.x - prev.raft.x) / STEP;
+      const vy = respawned ? 0 : (curr.raft.y - prev.raft.y) / STEP;
       const k = damp(10, dt);
       vel.x += (vx - vel.x) * k;
       vel.y += (vy - vel.y) * k;

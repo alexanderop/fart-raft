@@ -14,8 +14,8 @@ import {
   RAFT_MASS,
   RIDER_BODY,
   RIDER_RING,
-  SOLO_BOOST,
   STEP,
+  crewPower,
   WALK_SPEED,
   type Zone,
 } from "./constants.ts";
@@ -101,7 +101,7 @@ export function applyInputs(
 ): void {
   const rot = raft.body.rotation();
   const pos = raft.body.translation();
-  const solo = raft.zones.length === 1;
+  const impulse = FART_FORCE * STEP * crewPower(raft.zones.length);
 
   raft.at.forEach((at, i) => {
     const input = inputs[i];
@@ -129,12 +129,25 @@ export function applyInputs(
     const out = rot + raft.at[i]!;
     const dirX = -Math.cos(out);
     const dirY = -Math.sin(out);
-    const impulse = FART_FORCE * STEP * (solo ? SOLO_BOOST : 1);
     raft.body.applyImpulse({ x: dirX * impulse, y: dirY * impulse }, true);
     const x = pos.x - dirX * RIDER_RING;
     const y = pos.y - dirY * RIDER_RING;
     // The gas leaves opposite to the push.
     events.push({ type: "fart", seat: i, x, y, dirX: -dirX, dirY: -dirY });
+  });
+}
+
+/** Put the raft down at `at`, dead still, every rider back mid-arc with a full tank. */
+export function placeRaft(raft: Raft, at: Pose): void {
+  raft.body.setTranslation({ x: at.x, y: at.y }, true);
+  raft.body.setRotation(at.rot, true);
+  raft.body.setLinvel({ x: 0, y: 0 }, true);
+  raft.body.setAngvel(0, true);
+  raft.zones.forEach((zone, i) => {
+    raft.at[i] = zone.center;
+    raft.gas[i] = GAS_MAX;
+    raft.burst[i] = 0;
+    raft.cooldown[i] = 0;
   });
 }
 

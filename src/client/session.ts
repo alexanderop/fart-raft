@@ -8,6 +8,7 @@ import {
   type Gamepads,
 } from "../input/gamepad.ts";
 import { keyboardSource, PLAYER_KEYS, WASD_OR_ARROWS } from "../input/keyboard.ts";
+import { touchSource } from "../input/touch.ts";
 import {
   createSeats,
   EMPTY_PLAN,
@@ -18,8 +19,8 @@ import {
   type SeatKind,
   type SeatPlan,
 } from "../input/sources.ts";
-import { connect } from "../net/client.ts";
-import { FRAME_TICKS } from "../net/protocol.ts";
+import type { Connection } from "../net/client.ts";
+import { FRAME_TICKS, riderOf, type Roster } from "../net/protocol.ts";
 import { crewZones, STEP, type Zone } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
 import type { LevelData, SimEvent, Snapshot } from "../sim/types.ts";
@@ -30,10 +31,11 @@ export type FrameView = { prev: Snapshot; curr: Snapshot; alpha: number; events:
 
 /**
  * Where the game state comes from. A local session steps the sim in this tab, an online one
- * receives snapshots from the server. main.ts renders either the same way.
+ * receives snapshots from the server. main.ts renders either the same way; the crew size comes
+ * from the snapshot (`riders.length`), so it can change between races.
  */
 export type Session = {
-  crew: readonly Zone[];
+  /** One name tag per rider. */
   seatLabels(): readonly string[];
   /** Once per fixed client tick (60 Hz). */
   tick(): void;
@@ -76,7 +78,9 @@ function createSeatDriver(
       const cluster = plan.keys.get(i);
       if (cluster === undefined) return bot(i);
       const keys = cfg.humans === 1 ? WASD_OR_ARROWS : PLAYER_KEYS[cluster]!;
-      return keyboardSource(keys, heading);
+      const kb = keyboardSource(keys, heading);
+      // A lone human may be on a phone: the touch stick and button drive the same seat.
+      return cfg.humans === 1 ? mergeSources(kb, touchSource(heading)) : kb;
     });
     labels = zones.map((_, i) => {
       const onPad = [...plan.pads.values()].includes(i);
@@ -134,7 +138,7 @@ function rumbleFor(
     if (e.type === "fart") {
       const pad = padOfSeat(e.seat);
       if (pad !== undefined) pads.rumble(pad, "fart");
-    } else if (e.type === "lifeLost") {
+    } else if (e.type === "hit") {
       for (const pad of allPads()) pads.rumble(pad, "hit");
     }
   }
@@ -167,7 +171,6 @@ export async function localSession(
   }
 
   return {
-    crew,
     seatLabels: driver.labels,
     tick() {
       driver.update();
@@ -200,38 +203,44 @@ type Received = {
   curr: Snapshot;
   at: number;
   events: SimEvent[];
-  labels: string[];
 };
 
 /**
- * Join the server at `url` and take the first free seat. Resolves once the first frame is in,
- * so there is always something to draw. `onLost` fires if the seat is lost afterwards.
+ * Race on a seat already joined in the lobby. Resolves once the first frame is in, which is when
+ * the host starts the race (or at once when joining mid-race), so there is always something to
+ * draw. `onLost` fires if the seat is lost afterwards.
  */
 export async function onlineSession(
-  url: string,
+  conn: Connection,
   heading: Heading,
   onLost: (reason: string) => void,
 ): Promise<Session> {
-  const conn = await connect(url);
   conn.onClose(onLost);
-  // Online there is one seat: keyboard and the first pad both drive it.
+  // Online there is one seat: keyboard, touch and the first pad all drive it.
   const source = mergeSources(
-    keyboardSource(WASD_OR_ARROWS, heading),
+    mergeSources(keyboardSource(WASD_OR_ARROWS, heading), touchSource(heading)),
     gamepadSource(gamepads, () => gamepads.connected()[0], heading),
   );
+  // The race's crew can differ from the lobby seats: label riders, and find ours, by `crew`.
+  const labelsOf = (roster: Roster) =>
+    roster.crew.map((c) => (c.seat === conn.seat ? "You" : c.name));
+  let labels = labelsOf(conn.roster());
+  let rider = riderOf(conn.roster(), conn.seat);
+  conn.onRoster((roster) => {
+    labels = labelsOf(roster);
+    rider = riderOf(roster, conn.seat);
+  });
 
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
     conn.onFrame((frame) => {
-      const labels = frame.seats.map((kind, i) =>
-        i === conn.seat ? "You" : kind === "human" ? `P${i + 1}` : "Bot",
-      );
       if (state) {
-        state.prev = state.curr;
+        // A restart with a different crew is a new raft: cut instead of blending riders across.
+        const recrewed = frame.snapshot.riders.length !== state.curr.riders.length;
+        state.prev = recrewed ? frame.snapshot : state.curr;
         state.curr = frame.snapshot;
         state.at = performance.now();
         state.events.push(...frame.events);
-        state.labels = labels;
         return;
       }
       state = {
@@ -239,15 +248,13 @@ export async function onlineSession(
         curr: frame.snapshot,
         at: performance.now(),
         events: [...frame.events],
-        labels,
       };
       resolve(state);
     });
   });
 
   return {
-    crew: crewZones(conn.crew),
-    seatLabels: () => received.labels,
+    seatLabels: () => labels,
     tick() {
       gamepads.poll();
       conn.send(source.read());
@@ -260,7 +267,7 @@ export async function onlineSession(
       rumbleFor(
         gamepads,
         events,
-        (seat) => (seat === conn.seat ? pad : undefined),
+        (seat) => (seat === rider ? pad : undefined),
         () => (pad === undefined ? [] : [pad]),
       );
       return { prev: received.prev, curr: received.curr, alpha, events };

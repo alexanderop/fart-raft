@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier2d-compat";
 import { channelWalls } from "./channel.ts";
 import { isIsland, islandOutline } from "./island.ts";
-import type { Box, Channel, HazardDef, LevelData, Pose, Span, Vec2 } from "./types.ts";
+import type { Box, Channel, HazardDef, LevelData, Pose, Span, Stretch, Vec2 } from "./types.ts";
 
 const BANK_RESTITUTION = 0.3;
 const SPIKE_RESTITUTION = 0.9;
@@ -46,9 +46,12 @@ export function buildLevel(world: RAPIER.World, level: LevelData): BuiltLevel {
 
 const HAZARD_KINDS: readonly string[] = [
   "spinner",
+  "cross",
   "sweeper",
   "log",
   "bumper",
+  "hammer",
+  "piston",
 ] satisfies HazardDef["kind"][];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -73,6 +76,7 @@ const isHazard = (v: unknown): v is HazardDef =>
 const isList = <T>(v: unknown, item: (x: unknown) => x is T): v is T[] =>
   Array.isArray(v) && v.every(item);
 const isVec2 = (v: unknown): v is Vec2 => isObject(v) && hasNums(v, ["x", "y"]);
+const isStretch = (v: unknown): v is Stretch => isObject(v) && hasNums(v, ["from", "to"]);
 const isSpan = (v: unknown): v is Span =>
   isObject(v) && hasNums(v, ["from", "to"]) && (v.side === "left" || v.side === "right");
 const isChannel = (v: unknown): v is Channel =>
@@ -80,7 +84,8 @@ const isChannel = (v: unknown): v is Channel =>
   hasNums(v, ["halfWidth"]) &&
   isList(v.points, isVec2) &&
   v.points.length >= 2 &&
-  isList(v.spikes, isSpan);
+  isList(v.spikes, isSpan) &&
+  (v.rapids === undefined || isList(v.rapids, isStretch));
 
 /** Validate a course JSON (hand-written or exported from Blender). Throws with the first bad field. */
 export function parseLevel(data: unknown): LevelData {

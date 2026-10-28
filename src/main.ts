@@ -1,6 +1,8 @@
 import "./style.css";
 import { Vector3 } from "three";
 import canyon from "../courses/canyon.json";
+import graveyard from "../courses/graveyard.json";
+import pond from "../courses/pond.json";
 import { startLoop } from "./client/loop.ts";
 import { createAudio } from "./client/fx/audio.ts";
 import { createCameraShake } from "./client/fx/cameraShake.ts";
@@ -13,53 +15,84 @@ import { createScene } from "./client/render/scene.ts";
 import { localSession, onlineSession, type Session } from "./client/session.ts";
 import { createHud, progressTrack } from "./client/ui/hud.ts";
 import { showBanner } from "./client/ui/banner.ts";
-import { launchFromUrl, launchToSearch, showMenu, type Launch } from "./client/ui/menu.ts";
+import { inviteLink, showOnlineMenu, showRoom, showSpectating } from "./client/ui/lobby.ts";
+import { configToSearch, defaultServerUrl, launchFromUrl, showMenu } from "./client/ui/menu.ts";
 import { listenKeyboard } from "./input/keyboard.ts";
+import { createTouchControls } from "./input/touch.ts";
 import { STEP } from "./sim/constants.ts";
 import { initPhysics } from "./sim/sim.ts";
 import { parseLevel } from "./sim/level.ts";
+import { isCourseName, type CourseName } from "./net/protocol.ts";
+import type { LevelData } from "./sim/types.ts";
 
-const level = parseLevel(canyon);
+/** Local play picks a course with `?course=`; online, the room's creator picked it. */
+const COURSES: Record<CourseName, unknown> = { canyon, graveyard, pond };
 const app = document.querySelector<HTMLElement>("#app")!;
-
 const physics = initPhysics();
-const launch = launchFromUrl(location.search) ?? (await showMenu(app));
-history.replaceState(null, "", launchToSearch(launch));
 
 /** The camera's forward direction on the water (sim radians): keys walk riders relative to it. */
-let cameraHeading = level.spawn.rot;
+let cameraHeading = 0;
 const heading = () => cameraHeading;
 
-async function startSession(choice: Launch): Promise<Session> {
-  if (choice.kind === "local") return localSession(level, choice.config, heading, physics);
-  const connecting = showBanner(app, "Connecting…", "info");
-  try {
-    return await onlineSession(choice.url, heading, (reason) =>
-      showBanner(app, `${reason} · Esc for menu`, "error"),
-    );
-  } catch (error) {
-    showBanner(
-      app,
-      `${error instanceof Error ? error.message : "Could not connect"} · Esc for menu`,
-      "error",
-    );
-    throw error;
-  } finally {
-    connecting();
+const showLost = (reason: string) => showBanner(app, `${reason} · Esc for menu`, "error");
+
+/** Menus until there is a game to play: its course, and how to start its session. */
+async function choose(): Promise<{ level: LevelData; start: () => Promise<Session> }> {
+  let launch = launchFromUrl(location.search);
+  while (true) {
+    launch ??= await showMenu(app);
+    if (launch.kind === "local") {
+      const param = new URLSearchParams(location.search).get("course") ?? "canyon";
+      const course = isCourseName(param) ? param : "canyon";
+      const level = parseLevel(COURSES[course]);
+      const { config } = launch;
+      const suffix = course === "canyon" ? "" : `&course=${course}`;
+      history.replaceState(null, "", configToSearch(config) + suffix);
+      return { level, start: () => localSession(level, config, heading, physics) };
+    }
+    const conn = await showOnlineMenu(app, launch.server, launch.room);
+    if (!conn) {
+      launch = undefined;
+      history.replaceState(null, "", location.pathname);
+      continue;
+    }
+    const invite = inviteLink(conn.code, launch.server, defaultServerUrl());
+    history.replaceState(null, "", new URL(invite).search);
+    const level = parseLevel(COURSES[conn.roster().course]);
+    return {
+      level,
+      async start() {
+        const hideRoom = showRoom(app, conn, invite);
+        try {
+          return await onlineSession(conn, heading, showLost);
+        } finally {
+          hideRoom();
+          showSpectating(app, conn);
+        }
+      },
+    };
   }
 }
+
+const game = await choose();
+const level = game.level;
+cameraHeading = level.spawn.rot;
 
 addEventListener("keydown", (e) => {
   if (e.code === "Escape") location.href = location.pathname; // back to the menu
 });
 
-const session = await startSession(launch);
+const session = await game.start();
+createTouchControls(app, heading, {
+  onRestart: () => session.restart(),
+  onMenu: () => (location.href = location.pathname),
+});
 listenKeyboard(window);
 addEventListener("keydown", (e) => {
   if (e.code === "KeyR") session.restart();
 });
 
-const view = await createScene(app, level, session.crew);
+const view = await createScene(app, level);
 const particles = createParticles(view.scene);
 const wake = createWake(view.scene);
 const confetti = createConfetti(view.scene);

@@ -59,6 +59,12 @@
         "from": 287.513,
         "to": 314.24
       }
+    ],
+    "rapids": [
+      {
+        "from": 405,
+        "to": 470
+      }
     ]
   },
   "walls": [
@@ -209,8 +215,8 @@
       "rot": 0.348,
       "hx": 5,
       "hy": 0.45,
-      "id": "spinner-1",
-      "kind": "spinner",
+      "id": "cross-1",
+      "kind": "cross",
       "speed": 0.8
     },
     {

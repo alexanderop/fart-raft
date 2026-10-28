@@ -1,11 +1,12 @@
 import RAPIER from "@dimforge/rapier2d-compat";
-import { CURRENT_SPEED, crewZones, MAX_CREW, STEP, type Zone } from "./constants.ts";
-import { nearestS, pointAt, sampleChannel, type Sample } from "./channel.ts";
+import { crewZones, MAX_CREW, RESPAWN_BACK, STEP, type Zone } from "./constants.ts";
+import { flowSpeed, nearestS, pointAt, sampleChannel, type Sample } from "./channel.ts";
 import {
   freshHealth,
   initialPhase,
   reachCheckpoint,
   takeHit,
+  tickHealth,
   tickPhase,
   type Health,
 } from "./flow.ts";
@@ -16,23 +17,36 @@ import {
   applyWaterDrag,
   createRaft,
   knockBack,
+  placeRaft,
   riderPose,
   type Raft,
 } from "./raft.ts";
-import type { LevelData, Phase, Pose, SeatInput, SimEvent, Snapshot, Vec2 } from "./types.ts";
+import type {
+  Channel,
+  LevelData,
+  Phase,
+  Pose,
+  SeatInput,
+  SimEvent,
+  Snapshot,
+  Vec2,
+} from "./types.ts";
 
 export type Sim = {
   world: RAPIER.World;
   eventQueue: RAPIER.EventQueue;
   raft: Raft;
-  /** Centerline samples of the course's channel, for the current. Null on still-water courses. */
+  /** The course's channel and its centerline samples, for the current. Null on still-water courses. */
+  channel: Channel | null;
   stream: Sample[] | null;
   hazards: Hazard[];
   checkpointByHandle: Map<number, number>;
-  /** Collider handles that cost a life on contact (hazards, spiked banks) → how hard they throw the raft. */
+  /** Collider handles that wipe the crew out on contact (hazards, spiked banks) → how hard they throw the raft. */
   harmful: Map<number, number>;
   health: Health;
   checkpointCount: number;
+  /** Where the raft reappears after a wipeout: the start, then each gate it passes. */
+  respawnAt: Pose[];
   phase: Phase;
   tick: number;
 };
@@ -50,15 +64,17 @@ export function createSim(level: LevelData, zones: readonly Zone[] = crewZones(M
     world,
     eventQueue: new RAPIER.EventQueue(true),
     raft: createRaft(world, level.spawn, zones),
+    channel: level.channel,
     stream: level.channel ? sampleChannel(level.channel) : null,
     hazards,
     checkpointByHandle,
     harmful: new Map([
       ...[...spikeHandles].map((h) => [h, 1] as const),
-      ...hazards.map((h) => [h.colliderHandle, h.knock] as const),
+      ...hazards.flatMap((h) => h.colliderHandles.map((c) => [c, h.knock] as const)),
     ]),
     health: freshHealth(),
     checkpointCount: level.checkpoints.length,
+    respawnAt: respawnPoses(level),
     phase: initialPhase(),
     tick: 0,
   };
@@ -69,13 +85,21 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   const events: SimEvent[] = [];
   sim.phase = tickPhase(sim.phase, sim.tick, events);
   const racing = sim.phase.kind === "racing";
-  // A sunk raft ignores its crew: no walking, no farting.
-  if (sim.phase.kind !== "dead") applyInputs(sim.raft, inputs, racing, events);
-  sim.health.invulnerable = Math.max(0, sim.health.invulnerable - 1);
+  // A wiped-out crew tumbles helplessly until it respawns: no walking, no farting.
+  if (sim.health.respawnIn === 0) applyInputs(sim.raft, inputs, racing, events);
+  if (tickHealth(sim.health)) {
+    const next = sim.phase.kind === "racing" ? sim.phase.nextCheckpoint : 0;
+    const at = sim.respawnAt[next]!;
+    placeRaft(sim.raft, at);
+    events.push({ type: "respawn", x: at.x, y: at.y });
+  }
   applyWaterDrag(sim.raft, racing ? flowAt(sim, sim.raft.body.translation()) : STILL);
   for (const hazard of sim.hazards) hazard.update(STEP);
 
   sim.world.step(sim.eventQueue);
+  // A fast hazard (a piston's punch) can strike and bounce the raft clear within one step, so a
+  // contact that started this tick counts as well as one that is still touching.
+  let struck: number | null = null;
   sim.eventQueue.drainCollisionEvents((h1, h2, started) => {
     if (!started) return;
     const other =
@@ -86,25 +110,17 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
       sim.phase = reachCheckpoint(sim.phase, checkpoint, sim.checkpointCount, sim.tick, events);
       return;
     }
+    if (sim.harmful.has(other)) struck = other;
     const { x, y } = sim.raft.body.translation();
     const v = sim.raft.body.linvel();
     events.push({ type: "bump", x, y, speed: Math.hypot(v.x, v.y) });
   });
 
-  // A raft pressed against a hazard keeps getting hurt, once per grace window.
-  if (sim.phase.kind === "racing" && sim.health.invulnerable === 0) {
-    const hit = touchingHarm(sim);
-    if (hit) {
-      sim.phase = takeHit(
-        sim.phase,
-        sim.health,
-        sim.tick,
-        sim.raft.body.translation(),
-        hit.away,
-        events,
-      );
+  // Touching a hazard or a spiked bank wipes the crew out; the knock sends it tumbling.
+  if (sim.phase.kind === "racing" && sim.health.respawnIn === 0 && sim.health.invulnerable === 0) {
+    const hit = touchingHarm(sim) ?? strike(sim, struck);
+    if (hit && takeHit(sim.phase, sim.health, sim.raft.body.translation(), hit.away, events))
       knockBack(sim.raft, hit.away, hit.knock);
-    }
   }
 
   sim.tick++;
@@ -133,6 +149,13 @@ function touchingHarm(sim: Sim): { away: Vec2; knock: number } | null {
   return hit;
 }
 
+/** The hit from a harmful collider whose contact started this tick, if there was one. */
+function strike(sim: Sim, handle: number | null): { away: Vec2; knock: number } | null {
+  if (handle === null) return null;
+  const thing = sim.world.getCollider(handle);
+  return { away: awayFrom(thing, sim.raft.body.translation()), knock: sim.harmful.get(handle)! };
+}
+
 /** Unit vector from the closest point of `thing` to `p`; straight along +x if they coincide. */
 function awayFrom(thing: RAPIER.Collider, p: Vec2): Vec2 {
   const near = thing.projectPoint(p, false)?.point ?? thing.translation();
@@ -144,11 +167,34 @@ function awayFrom(thing: RAPIER.Collider, p: Vec2): Vec2 {
 
 const STILL = { x: 0, y: 0 };
 
-/** The current: downstream along the channel's centerline tangent. It starts with the race. */
+/**
+ * Respawn pose per "next checkpoint": index 0 is the start, index i a run-up RESPAWN_BACK m
+ * upstream of gate i − 1, facing downstream (on a course without a channel: back along the line
+ * from the previous gate, facing the way the start does).
+ */
+function respawnPoses(level: LevelData): Pose[] {
+  const stream = level.channel ? sampleChannel(level.channel) : null;
+  const gates = level.checkpoints.slice(0, -1).map((gate, i): Pose => {
+    if (stream) {
+      const at = pointAt(stream, Math.max(0, nearestS(stream, gate) - RESPAWN_BACK));
+      return { x: at.x, y: at.y, rot: Math.atan2(at.ty, at.tx) };
+    }
+    const from = i === 0 ? level.spawn : level.checkpoints[i - 1]!;
+    const dx = gate.x - from.x;
+    const dy = gate.y - from.y;
+    const back = Math.min(RESPAWN_BACK, Math.hypot(dx, dy)) / (Math.hypot(dx, dy) || 1);
+    return { x: gate.x - dx * back, y: gate.y - dy * back, rot: level.spawn.rot };
+  });
+  return [level.spawn, ...gates];
+}
+
+/** The current: downstream along the channel's centerline tangent, fast in rapids. It starts with the race. */
 function flowAt(sim: Sim, p: Vec2): Vec2 {
-  if (!sim.stream) return STILL;
-  const at = pointAt(sim.stream, nearestS(sim.stream, p));
-  return { x: at.tx * CURRENT_SPEED, y: at.ty * CURRENT_SPEED };
+  if (!sim.stream || !sim.channel) return STILL;
+  const s = nearestS(sim.stream, p);
+  const at = pointAt(sim.stream, s);
+  const speed = flowSpeed(sim.channel, s);
+  return { x: at.tx * speed, y: at.ty * speed };
 }
 
 function pose(body: RAPIER.RigidBody): Pose {
@@ -163,7 +209,8 @@ export function snapshot(sim: Sim): Snapshot {
     raft: pose(sim.raft.body),
     riders: sim.raft.at.map(riderPose),
     gas: [...sim.raft.gas],
-    lives: sim.health.lives,
+    deaths: sim.health.deaths,
+    respawnIn: sim.health.respawnIn,
     invulnerable: sim.health.invulnerable,
     hazards: sim.hazards.map((h) => ({ id: h.id, ...pose(h.body) })),
     phase: sim.phase,

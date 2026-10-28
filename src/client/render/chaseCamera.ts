@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import { nearestS, pointAt, sampleChannel } from "../../sim/channel.ts";
 import type { LevelData, Pose, Snapshot } from "../../sim/types.ts";
+import { jumped } from "./coords.ts";
 import { clamp, damp } from "./spring.ts";
 
 /**
- * High three-quarter camera, like Fart Together: it hangs well above and behind the raft and
- * slowly turns to follow the stream (the channel's tangent ahead of the raft), never the raft's
+ * Low chase camera, like Fart Together: it rides close behind and a little above the raft, so the
+ * course ahead and the horizon fill the view and the banks rush past. It slowly turns to follow
+ * the stream (the channel's tangent ahead of the raft), never the raft's
  * own spin. Courses without a channel follow the direction to the next gate instead.
  */
 export type ChaseCamera = {
@@ -20,16 +22,19 @@ export type ChaseCamera = {
   ): void;
 };
 
-const BASE_FOV = 46;
-const BACK = 13;
-const HEIGHT = 19;
+const BASE_FOV = 52;
+const BACK = 15;
+const HEIGHT = 11.5;
 /** Stream direction is read this far ahead of the raft, so bends turn the view early. */
 const HEADING_AHEAD = 10;
 /** Screens narrower than this widen the vertical FOV so the channel still fits across. */
 const DESIGN_ASPECT = 16 / 9;
 const MAX_FOV = 90;
-/** The view centers a little ahead of the raft. */
-const LOOK_AHEAD = 4;
+/** The view centers this far ahead of the raft (m), so the raft sits low in the frame. */
+const LOOK_AHEAD = 5;
+/** At full speed the lens widens by this many degrees: speed reads as rushing banks. */
+const SPEED_FOV = 8;
+const FULL_SPEED = 10;
 
 /** Vertical FOV that shows the same horizontal extent as `fov` does at DESIGN_ASPECT. */
 function fitWidth(fov: number, aspect: number): number {
@@ -48,6 +53,7 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
   let init = false;
   let fov = BASE_FOV;
   let lastTick = 0;
+  let lastPose: Pose = level.spawn;
 
   /** Unit heading in sim space the camera wants to face. */
   function heading(pose: Pose, curr: Snapshot) {
@@ -65,8 +71,10 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
 
   return {
     update(camera, dt, pose, curr, vel, thrust, shake) {
-      const snap = !init || curr.tick < lastTick;
+      // A restart or a respawn cuts straight to the raft instead of flying across the course.
+      const snap = !init || curr.tick < lastTick || jumped(lastPose, pose);
       lastTick = curr.tick;
+      lastPose = pose;
       const speed = Math.hypot(vel.x, vel.y);
 
       const h = heading(pose, curr);
@@ -95,7 +103,7 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
       camera.position.copy(pos).add(shake);
       camera.lookAt(look);
 
-      const want = BASE_FOV + thrust * 3 + clamp(speed / 12, 0, 1) * 2;
+      const want = BASE_FOV + thrust * 3 + clamp(speed / FULL_SPEED, 0, 1) * SPEED_FOV;
       fov += (fitWidth(want, camera.aspect) - fov) * (snap ? 1 : damp(4, dt));
       if (Math.abs(camera.fov - fov) > 0.01) {
         camera.fov = fov;

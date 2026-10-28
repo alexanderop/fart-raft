@@ -1,6 +1,6 @@
 import { gamepads, menuIntent, type MenuIntent } from "../../input/gamepad.ts";
 import { planSeats, type SeatKind } from "../../input/sources.ts";
-import { MAX_CREW } from "../../sim/constants.ts";
+import { MAX_LOCAL } from "../../sim/constants.ts";
 
 /** What the start menu decides. Humans take the first seats; bots fill the rest when enabled. */
 export type GameConfig = { humans: number; bots: boolean };
@@ -9,33 +9,55 @@ export const CONTROLS = ["WASD · Space", "Arrows · Enter", "IJKL · U", "Num 8
 
 const STORAGE_KEY = "fart-raft:menu";
 
-/** What the player chose to start: a couch game on this machine, or a seat on a server. */
-export type Launch = { kind: "local"; config: GameConfig } | { kind: "online"; url: string };
+/** A phone or tablet: the first human plays on the on-screen stick and FART button. */
+export const isTouchDevice = (): boolean => matchMedia("(pointer: coarse)").matches;
 
-const defaultServerUrl = () => `ws://${location.hostname}:3000/rpc`;
+const KEYS_HINT = "Fart = up key, aim = left / right · R restarts · Esc menu";
+const TOUCH_HINT = "Left thumb: slide around the raft · hold FART to push · ↻ restarts · ☰ menu";
 
-/** `?online=1` joins the server on this host, `?online=<ws-url>` a specific one. */
+/**
+ * What the player chose to start: a couch game on this machine, or the online lobby on a
+ * server. `room` is set when an invite link named one.
+ */
+export type Launch =
+  | { kind: "local"; config: GameConfig }
+  | { kind: "online"; server: string; room?: string };
+
+/**
+ * In dev the server runs beside Vite on port 3000. A built client is served by the game server
+ * itself (`STATIC=dist`), so it talks to /rpc next to the page.
+ */
+export function defaultServerUrl(): string {
+  if (import.meta.env.DEV) return `ws://${location.hostname}:3000/rpc`;
+  const url = new URL("rpc", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.search = "";
+  return url.href;
+}
+
+/**
+ * `?room=CODE` is an invite link, `?online=1` opens the online lobby. `&server=<ws-url>`
+ * points either at a server other than the one on this host.
+ */
 export function launchFromUrl(search: string): Launch | undefined {
-  const online = new URLSearchParams(search).get("online");
-  if (online !== null) return { kind: "online", url: online === "1" ? defaultServerUrl() : online };
+  const params = new URLSearchParams(search);
+  const server = params.get("server") ?? defaultServerUrl();
+  const room = params.get("room");
+  if (room !== null) return { kind: "online", server, room };
+  if (params.get("online") !== null) return { kind: "online", server };
   const config = configFromUrl(search);
   return config && { kind: "local", config };
 }
 
-export const launchToSearch = (launch: Launch): string =>
-  launch.kind === "online"
-    ? `?online=${encodeURIComponent(launch.url)}`
-    : configToSearch(launch.config);
-
 /** Crew size for a config: a full raft with bots, otherwise one seat per human. */
-export const crewSize = (c: GameConfig): number => (c.bots ? MAX_CREW : c.humans);
+export const crewSize = (c: GameConfig): number => (c.bots ? MAX_LOCAL : c.humans);
 
 /** `?players=N&bots=0|1` skips the menu (handy for sharing a setup and for tests). */
 export function configFromUrl(search: string): GameConfig | undefined {
   const params = new URLSearchParams(search);
   const players = params.get("players");
   if (players === null) return undefined;
-  const humans = Math.max(0, Math.min(MAX_CREW, Number.parseInt(players, 10) || 0));
+  const humans = Math.max(0, Math.min(MAX_LOCAL, Number.parseInt(players, 10) || 0));
   return normalize({ humans, bots: params.get("bots") === "1" });
 }
 
@@ -57,7 +79,10 @@ function loadLast(): GameConfig {
       typeof saved.humans === "number" &&
       typeof saved.bots === "boolean"
     ) {
-      return normalize({ humans: Math.max(0, Math.min(MAX_CREW, saved.humans)), bots: saved.bots });
+      return normalize({
+        humans: Math.max(0, Math.min(MAX_LOCAL, saved.humans)),
+        bots: saved.bots,
+      });
     }
   } catch {
     // Storage blocked (private mode): fall through to the default.
@@ -79,7 +104,8 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
   host.insertAdjacentHTML(
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="menu-title">
-      <div class="menu-card">
+      <div class="menu-card menu-split">
+        <div class="menu-who">
         <h1 id="menu-title" class="menu-title">🎃 Fart Raft 🎃</h1>
         <p class="menu-sub">Steer the raft together. Every fart pushes it.</p>
         <div class="menu-label" id="players-label">Players</div>
@@ -96,10 +122,13 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
           <span>Fill empty seats with bots</span>
         </label>
         <p class="menu-hint menu-pads" data-pads aria-live="polite"></p>
+        </div>
+        <div class="menu-go">
         <ol class="menu-seats" data-seats></ol>
         <button type="button" class="menu-start" data-start>Start</button>
         <button type="button" class="menu-online" data-online>Play online</button>
-        <p class="menu-hint">Fart = up key, aim = left / right · R restarts · Esc menu</p>
+        <p class="menu-hint">${isTouchDevice() ? TOUCH_HINT : KEYS_HINT}</p>
+        </div>
       </div>
     </div>`,
   );
@@ -118,9 +147,12 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
       b.tabIndex = on ? 0 : -1;
     }
     bots.checked = config.bots;
-    bots.disabled = config.humans === 0 || config.humans === MAX_CREW;
+    bots.disabled = config.humans === 0 || config.humans === MAX_LOCAL;
     const size = crewSize(config);
     const connected = gamepads.connected();
+    const touch = isTouchDevice();
+    // A phone rarely has a pad: only mention controllers once one shows up.
+    padLine.hidden = touch && connected.length === 0;
     padLine.textContent =
       connected.length === 0
         ? "🎮 No controller · press a button on one to connect"
@@ -134,13 +166,14 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
     seats.innerHTML = Array.from({ length: size }, (_, i) => {
       if (i >= config.humans) return `<li class="bot">Bot</li>`;
       if (padSeats.has(i)) return `<li><b>P${i + 1}</b> 🎮 Controller</li>`;
+      if (touch && i === 0) return `<li><b>P1</b> 👆 Touch</li>`;
       const keys = config.humans === 1 ? "WASD / Arrows · Space" : CONTROLS[plan.keys.get(i) ?? i];
       return `<li><b>P${i + 1}</b> ${keys}</li>`;
     }).join("");
   };
 
   const pick = (humans: number) => {
-    config = normalize({ humans, bots: humans === 0 ? true : config.bots && humans < MAX_CREW });
+    config = normalize({ humans, bots: humans === 0 ? true : config.bots && humans < MAX_LOCAL });
     render();
   };
 
@@ -172,11 +205,11 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
         go();
       }
       const n = Number.parseInt(e.key, 10);
-      if (n >= 0 && n <= MAX_CREW) pick(n);
+      if (n >= 0 && n <= MAX_LOCAL) pick(n);
     };
     const act = (intent: MenuIntent) => {
       if (intent === "left" || intent === "right") {
-        pick(Math.max(0, Math.min(MAX_CREW, config.humans + (intent === "left" ? -1 : 1))));
+        pick(Math.max(0, Math.min(MAX_LOCAL, config.humans + (intent === "left" ? -1 : 1))));
       } else if (intent === "up" || intent === "down") {
         (document.activeElement === online ? start : online).focus();
       } else if (intent === "toggle") {
@@ -212,7 +245,7 @@ export function showMenu(host: HTMLElement): Promise<Launch> {
     };
     padFrame = requestAnimationFrame(pollPads);
     start.addEventListener("click", go);
-    online.addEventListener("click", () => launch({ kind: "online", url: defaultServerUrl() }));
+    online.addEventListener("click", () => launch({ kind: "online", server: defaultServerUrl() }));
     addEventListener("keydown", onKey);
   });
 }

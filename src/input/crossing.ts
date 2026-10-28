@@ -1,6 +1,6 @@
 import { levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
 import { RAFT_HULL, STEP } from "../sim/constants.ts";
-import { hazardBox, hazardReach } from "../sim/hazards/shape.ts";
+import { hazardBoxes, hazardReach } from "../sim/hazards/shape.ts";
 import type { Box, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
 import { distToBox } from "./geometry.ts";
 
@@ -195,7 +195,7 @@ export function planCrossing(
   const steps = Math.ceil(HORIZON / DT) + 1;
   const slips = [0, -SLIP, SLIP];
   const boxes = Array.from({ length: steps }, (_, k) =>
-    group.flatMap((g) => slips.map((slip) => hazardBox(g.def, now + k * DT + slip))),
+    group.flatMap((g) => slips.flatMap((slip) => hazardBoxes(g.def, now + k * DT + slip))),
   );
 
   // The centerline sampled every CELL metres from BEHIND metres back, so a candidate path is a
