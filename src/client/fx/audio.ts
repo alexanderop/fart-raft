@@ -72,6 +72,8 @@ function envelope(
  */
 export function createAudio(volume: VolumeStore) {
   let ctx: AudioContext | null = null;
+  /** Between races: the context stays suspended, so the menu is silent. */
+  let paused = false;
   let noise: AudioBuffer;
   let sfx: GainNode;
   let fartBus: GainNode;
@@ -229,7 +231,7 @@ export function createAudio(volume: VolumeStore) {
         return;
       }
     }
-    if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+    if (ctx.state === "suspended" && !paused) void ctx.resume().catch(() => undefined);
   }
 
   // Browsers keep the context suspended until a user gesture: create and resume it on the first one.
@@ -525,6 +527,18 @@ export function createAudio(volume: VolumeStore) {
         countdownSecond = second;
         beep(false);
       }
+    },
+    /**
+     * Leaving a race: suspend the context instead of closing it, so one AudioContext serves the
+     * whole app (browsers cap how many a page may open). `resume()` picks it up for the next race.
+     */
+    suspend() {
+      paused = true;
+      if (ctx?.state === "running") void ctx.suspend().catch(() => undefined);
+    },
+    resume() {
+      paused = false;
+      if (ctx?.state === "suspended") void ctx.resume().catch(() => undefined);
     },
     /** M key: same as the mute button. Returns whether the game is now silent. */
     toggleMute(): boolean {

@@ -1,4 +1,5 @@
 import { gamepads, menuIntent, type MenuIntent } from "../../input/gamepad.ts";
+import { CONTROLS } from "../../input/keyboard.ts";
 import { planSeats, type SeatKind } from "../../input/sources.ts";
 import { DEFAULT_DIFFICULTY, MAX_LOCAL } from "../../sim/constants.ts";
 import type { Difficulty } from "../../sim/types.ts";
@@ -11,8 +12,6 @@ import { volumePanel } from "./volume.ts";
  * `difficulty` is how hard the course plays (chill unless picked otherwise).
  */
 export type GameConfig = { humans: number; bots: boolean; difficulty: Difficulty };
-
-export const CONTROLS = ["WASD · Space", "Arrows · Enter", "IJKL · U", "Num 8456 · Num 0"] as const;
 
 const STORAGE_KEY = "fart-raft:menu";
 

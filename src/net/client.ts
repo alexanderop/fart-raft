@@ -44,8 +44,9 @@ export type Connection = {
   restart(): void;
   /** Frames that arrived before the handler was set are delivered first. */
   onFrame(handler: (frame: Frame) => void): void;
-  /** The seat is lost: the connection dropped or the server ended the stream. */
+  /** The seat is lost: the connection dropped or the server ended the stream. Not called after `close()`. */
   onClose(handler: (reason: string) => void): void;
+  /** Leaves the room: ends the Join stream (the server frees the seat) and stops all handlers. */
   close(): void;
 };
 
@@ -108,6 +109,7 @@ export async function connect(
   const backlog: Frame[] = [];
   let welcome: Welcome | undefined;
   let roster: Roster | undefined;
+  let closed = false;
 
   let seated!: () => void;
   let refused!: (error: Error) => void;
@@ -116,6 +118,7 @@ export async function connect(
     refused = reject;
   });
   const lost = (reason: string) => {
+    if (closed) return;
     refused(new Error(reason));
     closeHandler?.(reason);
   };
@@ -130,11 +133,16 @@ export async function connect(
               welcome = w;
             },
             Roster: (r) => {
+              if (closed) return;
               roster = r.roster;
               if (welcome) seated();
               for (const handler of rosterHandlers) handler(r.roster);
             },
-            Frame: (frame) => (frameHandler ? frameHandler(frame) : backlog.push(frame)),
+            Frame: (frame) => {
+              if (closed) return;
+              if (frameHandler) frameHandler(frame);
+              else backlog.push(frame);
+            },
           }),
         ),
       ),
@@ -167,7 +175,7 @@ export async function connect(
       return () => rosterHandlers.delete(handler);
     },
     send(input) {
-      if (last && sameInput(last, input)) return;
+      if (closed || (last && sameInput(last, input))) return;
       last = input;
       runtime.runFork(client.SendInput({ ...seat, input }, { discard: true }).pipe(Effect.ignore));
     },
@@ -185,6 +193,11 @@ export async function connect(
       closeHandler = handler;
     },
     close() {
+      if (closed) return;
+      closed = true;
+      frameHandler = closeHandler = undefined;
+      rosterHandlers.clear();
+      backlog.length = 0;
       void runtime.dispose();
     },
   };

@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier2d-compat";
 import { channelWalls } from "./channel.ts";
+import { HAZARD_KINDS } from "./hazards/index.ts";
 import { isIsland, islandOutline } from "./island.ts";
 import type { Box, Channel, HazardDef, LevelData, Pose, Span, Stretch, Vec2 } from "./types.ts";
 
@@ -43,18 +44,6 @@ export function buildLevel(world: RAPIER.World, level: LevelData): BuiltLevel {
   });
   return { checkpointByHandle, spikeHandles };
 }
-
-const HAZARD_KINDS: readonly string[] = [
-  "spinner",
-  "cross",
-  "sweeper",
-  "log",
-  "bumper",
-  "hammer",
-  "piston",
-  "dropgate",
-  "mine",
-] satisfies HazardDef["kind"][];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const hasNums = (v: Record<string, unknown>, keys: readonly string[]) =>

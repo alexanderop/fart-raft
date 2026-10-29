@@ -40,6 +40,8 @@ export const NUMPAD: KeyBinding = {
 };
 /** Couch co-op bindings by player index (P1…P4) on one keyboard. */
 export const PLAYER_KEYS = [WASD, ARROWS, IJKL, NUMPAD] as const;
+/** Display names of `PLAYER_KEYS`, for the menu and name tags. */
+export const CONTROLS = ["WASD · Space", "Arrows · Enter", "IJKL · U", "Num 8456 · Num 0"] as const;
 /** Single player plays on either cluster. */
 export const WASD_OR_ARROWS: KeyBinding = {
   up: [...WASD.up, ...ARROWS.up],
@@ -52,13 +54,24 @@ export const WASD_OR_ARROWS: KeyBinding = {
 const held = new Set<string>();
 const anyHeld = (codes: readonly string[]) => codes.some((c) => held.has(c));
 
-export function listenKeyboard(target: Window): void {
-  target.addEventListener("keydown", (e) => {
-    if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
-    held.add(e.code);
-  });
-  target.addEventListener("keyup", (e) => held.delete(e.code));
-  target.addEventListener("blur", () => held.clear());
+const onDown = (e: KeyboardEvent) => {
+  if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
+  held.add(e.code);
+};
+const onUp = (e: KeyboardEvent) => held.delete(e.code);
+const onBlur = () => held.clear();
+
+/** Tracks held keys on `target` until the returned function is called. */
+export function listenKeyboard(target: Window): () => void {
+  target.addEventListener("keydown", onDown);
+  target.addEventListener("keyup", onUp);
+  target.addEventListener("blur", onBlur);
+  return () => {
+    target.removeEventListener("keydown", onDown);
+    target.removeEventListener("keyup", onUp);
+    target.removeEventListener("blur", onBlur);
+    held.clear();
+  };
 }
 
 /**

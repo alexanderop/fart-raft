@@ -160,9 +160,15 @@ export function showOnlineMenu(
 
 /**
  * The room before the race: its code and invite link, who is in, and Start for the host.
- * Re-renders on every roster change. Call the returned function to take it down.
+ * Re-renders on every roster change. Leave calls `onLeave`; call the returned function to take
+ * it down.
  */
-export function showRoom(host: HTMLElement, conn: Connection, invite: string): () => void {
+export function showRoom(
+  host: HTMLElement,
+  conn: Connection,
+  invite: string,
+  onLeave: () => void,
+): () => void {
   const { course: picked, difficulty } = conn.roster();
   const course = PICKABLE.find((c) => c.course === picked)?.label ?? "";
   const mode = MODE_LABELS[difficulty].label;
@@ -233,9 +239,7 @@ export function showRoom(host: HTMLElement, conn: Connection, invite: string): (
     setTimeout(() => (copy.textContent = "Copy link"), 1500);
   });
   link.addEventListener("focus", () => link.select());
-  root.querySelector("[data-leave]")!.addEventListener("click", () => {
-    location.href = location.pathname;
-  });
+  root.querySelector("[data-leave]")!.addEventListener("click", onLeave);
 
   return () => {
     stop();
@@ -245,9 +249,9 @@ export function showRoom(host: HTMLElement, conn: Connection, invite: string): (
 
 /**
  * During a race: a banner while this player is seated but not in the crew (joined mid-race).
- * Goes away once a restart puts them on the raft.
+ * Goes away once a restart puts them on the raft. The returned function stops it.
  */
-export function showSpectating(host: HTMLElement, conn: Connection): void {
+export function showSpectating(host: HTMLElement, conn: Connection): () => void {
   let hide: (() => void) | undefined;
   const render = (roster: Roster) => {
     const watching = roster.started && riderOf(roster, conn.seat) < 0;
@@ -259,5 +263,9 @@ export function showSpectating(host: HTMLElement, conn: Connection): void {
     }
   };
   render(conn.roster());
-  conn.onRoster(render);
+  const stop = conn.onRoster(render);
+  return () => {
+    stop();
+    hide?.();
+  };
 }

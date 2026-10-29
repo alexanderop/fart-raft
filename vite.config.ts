@@ -40,7 +40,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["src/client/**", "src/input/**"],
+        files: ["src/client/**"],
         rules: {
           "no-restricted-imports": [
             "error",
@@ -50,6 +50,28 @@ export default defineConfig({
                   group: ["effect", "effect/*", "@effect/*"],
                   message:
                     "Effect lives in src/net and server/. Reach the network through src/net/client.ts.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["src/input/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                {
+                  group: ["effect", "effect/*", "@effect/*"],
+                  message:
+                    "Effect lives in src/net and server/. Reach the network through src/net/client.ts.",
+                },
+                {
+                  group: ["**/client/**"],
+                  message:
+                    "input/ must not import client. The client depends on input, not the other way round.",
                 },
               ],
             },

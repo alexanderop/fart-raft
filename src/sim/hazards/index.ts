@@ -1,13 +1,13 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
-import type { HazardDef } from "../types.ts";
-import { createBumper } from "./bumper.ts";
-import { createDropgate } from "./dropgate.ts";
-import { createHammer } from "./hammer.ts";
-import { createLog } from "./log.ts";
-import { createMine } from "./mine.ts";
-import { createPiston } from "./piston.ts";
-import { createSpinner } from "./spinner.ts";
-import { createSweeper } from "./sweeper.ts";
+import type { Box, HazardDef } from "../types.ts";
+import { bumper } from "./bumper.ts";
+import { dropgate } from "./dropgate.ts";
+import { hammer } from "./hammer.ts";
+import { log } from "./log.ts";
+import { mine } from "./mine.ts";
+import { piston } from "./piston.ts";
+import { cross, spinner } from "./spinner.ts";
+import { sweeper } from "./sweeper.ts";
 
 /** Update Method: every hazard advances itself once per tick. */
 export type Hazard = {
@@ -20,22 +20,44 @@ export type Hazard = {
   update(dt: number): void;
 };
 
-/**
- * Type Object (light): the Blender export picks a `kind` and tunes it with data
- * (speed, size). The behavior for each kind stays in code.
- */
-const KINDS: Record<HazardDef["kind"], (world: RAPIER.World, def: HazardDef) => Hazard> = {
-  spinner: createSpinner,
-  cross: createSpinner,
-  sweeper: createSweeper,
-  log: createLog,
-  bumper: createBumper,
-  hammer: createHammer,
-  piston: createPiston,
-  dropgate: createDropgate,
-  mine: createMine,
+/** Everything the sim knows about one kind of hazard. Each kind's module exports one. */
+export type HazardKind = {
+  /** Its Rapier body and colliders. */
+  create(world: RAPIER.World, def: HazardDef): Hazard;
+  /**
+   * The boxes it fills `t` seconds in (hazard time). Round things get a box that bounds them (a
+   * bumper at its fullest), so a planner that keeps clear of the boxes keeps clear of the hazard.
+   */
+  boxes(def: HazardDef, t: number): Box[];
+  /** How far its swept area reaches from (x, y) along the course, m. */
+  reach(def: HazardDef): number;
 };
 
+/**
+ * Type Object (light): the Blender export picks a `kind` and tunes it with data
+ * (speed, size). The behavior for each kind stays in code, one module per kind.
+ */
+const KINDS: Record<HazardDef["kind"], HazardKind> = {
+  spinner,
+  cross,
+  sweeper,
+  log,
+  bumper,
+  hammer,
+  piston,
+  dropgate,
+  mine,
+};
+
+/** Every hazard kind a course may use: the level validator checks against this. */
+export const HAZARD_KINDS: readonly string[] = Object.keys(KINDS);
+
 export function createHazard(world: RAPIER.World, def: HazardDef): Hazard {
-  return KINDS[def.kind](world, def);
+  return KINDS[def.kind].create(world, def);
 }
+
+/** The boxes a hazard fills `t` seconds in (hazard time, see `hazardTime`). */
+export const hazardBoxes = (def: HazardDef, t: number): Box[] => KINDS[def.kind].boxes(def, t);
+
+/** How far the hazard's swept area reaches from (x, y) along the course, m. */
+export const hazardReach = (def: HazardDef): number => KINDS[def.kind].reach(def);

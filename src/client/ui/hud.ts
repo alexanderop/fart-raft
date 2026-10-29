@@ -116,7 +116,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
       ).join("")}</div>
     </div>`,
   );
-  const $ = (sel: string) => host.querySelector<HTMLElement>(sel)!;
+  const root = [...host.querySelectorAll<HTMLElement>(".hud")].at(-1)!;
+  const $ = (sel: string) => root.querySelector<HTMLElement>(sel)!;
   const status = $("[data-status]");
   const time = $("[data-time]");
   const fartPill = $("[data-farts]");
@@ -131,8 +132,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const hurt = $("[data-hurt]");
   const fill = $("[data-fill]");
   const raftMark = $("[data-raft]");
-  const marks = [...host.querySelectorAll<HTMLElement>(".track-mark")];
-  const tags = [...host.querySelectorAll<HTMLElement>(".tag")];
+  const marks = [...root.querySelectorAll<HTMLElement>(".track-mark")];
+  const tags = [...root.querySelectorAll<HTMLElement>(".tag")];
   const fills = tags.map((g) => g.querySelector<HTMLElement>("i")!);
   const labelSpans = tags.map((g) => g.querySelector<HTMLElement>("span")!);
   const lastGas = tags.map(() => GAS_MAX);
@@ -270,6 +271,9 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         lastGas[i] = gas;
       });
       placeTags(raft, snap.riders);
+    },
+    dispose() {
+      root.remove();
     },
   };
 }

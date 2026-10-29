@@ -1,6 +1,7 @@
 import { levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
 import { hazardRate, RAFT_HULL } from "../sim/constants.ts";
-import { hazardBoxes, hazardReach, hazardTime } from "../sim/hazards/shape.ts";
+import { hazardBoxes, hazardReach } from "../sim/hazards/index.ts";
+import { hazardTime } from "../sim/hazards/shape.ts";
 import type { Box, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
 import { distToBox } from "./geometry.ts";
 

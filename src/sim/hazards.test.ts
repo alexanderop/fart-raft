@@ -19,21 +19,14 @@ import {
   WALK_SPEED,
   walkSpeed,
 } from "./constants.ts";
-import {
-  bumperRadius,
-  dropgateDown,
-  dropgateLift,
-  dropgateShake,
-  hammerDown,
-  hammerLift,
-  hammerPivot,
-  hazardBoxes,
-  hazardTime,
-  logCenter,
-  mineCenter,
-  pistonCenter,
-  pistonOut,
-} from "./hazards/shape.ts";
+import { bumperRadius } from "./hazards/bumper.ts";
+import { dropgateDown, dropgateLift, dropgateShake } from "./hazards/dropgate.ts";
+import { hammerDown, hammerLift, hammerPivot } from "./hazards/hammer.ts";
+import { hazardBoxes } from "./hazards/index.ts";
+import { logCenter } from "./hazards/log.ts";
+import { mineCenter } from "./hazards/mine.ts";
+import { pistonCenter, pistonOut } from "./hazards/piston.ts";
+import { hazardTime } from "./hazards/shape.ts";
 import { isIsland, islandOutline, islandRadius } from "./island.ts";
 import { parseLevel } from "./level.ts";
 import { levelWalls } from "./channel.ts";

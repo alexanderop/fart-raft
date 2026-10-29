@@ -83,7 +83,7 @@ export function volumePanel(store: VolumeStore, opts: { compact?: boolean } = {}
 
 /**
  * In-race speaker button (top right, under the puff counter) that opens a popover with the
- * sliders. Esc closes the popover and is kept from reaching main.ts's back-to-menu handler; a
+ * sliders. Esc closes the popover and is kept from reaching the racing state's back-to-menu handler; a
  * tap or click anywhere else closes it too.
  */
 export function createVolumeButton(host: HTMLElement, store: VolumeStore) {
@@ -132,7 +132,7 @@ export function createVolumeButton(host: HTMLElement, store: VolumeStore) {
   const onPointer = (e: PointerEvent) => {
     if (isOpen() && !(e.target instanceof Node && root.contains(e.target))) close();
   };
-  // Capture on window runs before main.ts's own Esc listener.
+  // Capture on window runs before the racing state's Esc listener (client/app.ts).
   addEventListener("keydown", onKey, true);
   addEventListener("pointerdown", onPointer, true);
 

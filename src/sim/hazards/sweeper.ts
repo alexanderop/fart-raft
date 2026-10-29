@@ -1,10 +1,10 @@
 import RAPIER from "@dimforge/rapier2d-compat";
 import { SWEEP_AMPLITUDE } from "../constants.ts";
 import type { HazardDef } from "../types.ts";
-import type { Hazard } from "./index.ts";
+import type { Hazard, HazardKind } from "./index.ts";
 
 /** A bar hinged at one end on the bank that swings back and forth across the channel. */
-export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
+function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.y).setRotation(def.rot),
   );
@@ -25,3 +25,20 @@ export function createSweeper(world: RAPIER.World, def: HazardDef): Hazard {
     },
   };
 }
+
+export const sweeper: HazardKind = {
+  create: createSweeper,
+  boxes(def, t) {
+    const rot = def.rot + SWEEP_AMPLITUDE * Math.sin(t * def.speed);
+    return [
+      {
+        x: def.x + Math.cos(rot) * def.hx,
+        y: def.y + Math.sin(rot) * def.hx,
+        rot,
+        hx: def.hx,
+        hy: def.hy,
+      },
+    ];
+  },
+  reach: (def) => 2 * def.hx, // the whole arm, hinge to tip
+};

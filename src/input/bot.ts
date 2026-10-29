@@ -1,5 +1,6 @@
 import { CURRENT_SPEED, RAFT_HULL, STEP, TICK_RATE, type Zone } from "../sim/constants.ts";
-import { hazardBoxes as boxesOf, hazardTime } from "../sim/hazards/shape.ts";
+import { hazardBoxes as boxesOf } from "../sim/hazards/index.ts";
+import { hazardTime } from "../sim/hazards/shape.ts";
 import { clampToZone } from "../sim/raft.ts";
 import { levelWalls, pointAt, sampleChannel } from "../sim/channel.ts";
 import {

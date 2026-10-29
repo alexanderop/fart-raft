@@ -1,12 +1,12 @@
 import RAPIER from "@dimforge/rapier2d-compat";
 import type { HazardDef } from "../types.ts";
-import type { Hazard } from "./index.ts";
+import type { Hazard, HazardKind } from "./index.ts";
 
 /**
  * A rotating bar that swats the raft, `speed` radians per second. A cross is two bars square to
  * each other on one hub.
  */
-export function createSpinner(world: RAPIER.World, def: HazardDef): Hazard {
+function createSpinner(world: RAPIER.World, def: HazardDef): Hazard {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.y).setRotation(def.rot),
   );
@@ -29,3 +29,21 @@ export function createSpinner(world: RAPIER.World, def: HazardDef): Hazard {
     },
   };
 }
+
+export const spinner: HazardKind = {
+  create: createSpinner,
+  boxes: (def, t) => [{ ...def, rot: def.rot + def.speed * t }],
+  reach: (def) => def.hx,
+};
+
+export const cross: HazardKind = {
+  create: createSpinner,
+  boxes(def, t) {
+    const rot = def.rot + def.speed * t;
+    return [
+      { ...def, rot },
+      { ...def, rot: rot + Math.PI / 2 },
+    ];
+  },
+  reach: (def) => def.hx,
+};

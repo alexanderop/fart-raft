@@ -20,17 +20,28 @@ export type SceneView = {
   /** Feed every drained SimEvent here; animation reacts to events and snapshots only. */
   onEvent(e: SimEvent): void;
   draw(prev: Snapshot, curr: Snapshot, alpha: number, shake: THREE.Vector3): void;
+  /** Frees the GPU side (geometries, materials, textures, the WebGL context) and removes the canvas. */
+  dispose(): void;
 };
 
 const SUN_OFFSET = new THREE.Vector3(22, 40, 12);
 
-/** Frees a zone-marks group's GPU buffers. */
-function disposeMarks(group: THREE.Object3D): void {
-  group.traverse((o) => {
+/** Frees every geometry, material and texture the scene graph holds. */
+function disposeGraph(root: THREE.Object3D): void {
+  const materials = new Set<THREE.Material>();
+  root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     o.geometry.dispose();
-    (o.material as THREE.Material).dispose();
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) materials.add(m);
   });
+  for (const m of materials) {
+    for (const value of Object.values(m)) if (value instanceof THREE.Texture) value.dispose();
+    if (m instanceof THREE.ShaderMaterial) {
+      for (const u of Object.values(m.uniforms))
+        if (u.value instanceof THREE.Texture) u.value.dispose();
+    }
+    m.dispose();
+  }
 }
 
 /** The crew size is read from each snapshot (`riders.length`), so a restart may change it. */
@@ -97,7 +108,7 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
     markedCrew = crew;
     if (marks) {
       raft.remove(marks);
-      disposeMarks(marks);
+      disposeGraph(marks);
     }
     marks = createZoneMarks(crewZones(crew));
     raft.add(marks);
@@ -124,7 +135,8 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };
-  new ResizeObserver(resize).observe(renderer.domElement);
+  const observer = new ResizeObserver(resize);
+  observer.observe(renderer.domElement);
   addEventListener("resize", resize);
   visualViewport?.addEventListener("resize", resize);
   resize();
@@ -170,6 +182,17 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
       terrain.update(now, pose, camera);
       water.update(now);
       renderer.render(scene, camera);
+    },
+    dispose() {
+      observer.disconnect();
+      removeEventListener("resize", resize);
+      visualViewport?.removeEventListener("resize", resize);
+      disposeGraph(scene);
+      sun.shadow.dispose();
+      renderer.dispose();
+      // Browsers cap live WebGL contexts per page: drop this one now rather than on GC.
+      renderer.forceContextLoss();
+      renderer.domElement.remove();
     },
   };
 }
