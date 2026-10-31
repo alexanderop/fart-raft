@@ -28,3 +28,5 @@ Baseline: 12 test files, 228 tests, 138 s (`vp test run`, before any change).
 ## Log
 
 - Unit 1 (sim) landed: e512839, 6f8e762. Verified by the coordinator: `pnpm check` green, 249 tests (228 + 21 in `team.test.ts`). Co-op unchanged: 12 bot races hash identically on the old and new commit (agent's lever). Deviations accepted: Bump respawn moves upstream (a sideways spot can't fit a 14 m channel with a centered rival); rival blast is distance-only; `TEAM_SPACING` 6.2 m.
+- Unit 2 (server) landed: 81cfc2c. `RoomMode`, `Team` always on a seat, `placeOf` replaced `riderOf`, `SetTeam`/`SetMode`, `startBlocker` also gates Restart (an empty team would make `crewZones(0)` throw). 29 team-room tests incl. a real finish on a 12 m dash.
+- Vitest was collecting the bots worktree under `.claude/worktrees/` (532 tests reported). Excluded in `vite.config.ts` and `.gitignore`.
