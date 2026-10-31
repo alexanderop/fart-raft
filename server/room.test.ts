@@ -29,6 +29,7 @@ const seated = (...names: string[]) => [
     name,
     look: defaultLook(i),
     team: i % 2 === 0 ? (0 as const) : (1 as const),
+    away: false,
   })),
   ...Array(MAX_CREW - names.length).fill(null),
 ];
@@ -134,7 +135,7 @@ describe("given an empty room", () => {
           const room = yield* newRoom;
           const first = yield* lease(room, "Ann");
           const second = yield* lease(room, "Bo");
-          yield* Fiber.interrupt(first.fiber);
+          yield* room.leave(first.welcome.token);
           expect((yield* latestRoster(second.inbox)).host).toBe(1);
           const newcomer = yield* lease(room, "Cy");
           expect(newcomer.welcome.seat).toBe(0);
@@ -232,10 +233,12 @@ describe("given two players in the lobby", () => {
             Stream.runForEach((msg) => Queue.offer(inbox, msg)),
             Effect.forkScoped,
           );
+          expect(ServerMsg.guards.Welcome(yield* Queue.take(inbox))).toBe(true);
           expect((yield* latestRoster(inbox)).seats[0]).toEqual({
             name: "Ann",
             look: nurse,
             team: 0,
+            away: false,
           });
         }),
       ));
@@ -248,7 +251,7 @@ describe("given two players in the lobby", () => {
           yield* room.start(host.welcome.token);
           yield* room.setLook(host.welcome.token, nurse);
           const roster = yield* latestRoster(host.inbox);
-          expect(roster.seats[0]).toEqual({ name: "Ann", look: nurse, team: 0 });
+          expect(roster.seats[0]).toEqual({ name: "Ann", look: nurse, team: 0, away: false });
           expect(roster.crew).toEqual([{ name: "Ann", seat: 0, look: nurse, raft: 0 }]);
         }),
       ));
@@ -458,7 +461,7 @@ describe("given a race in progress", () => {
           yield* room.start(host.welcome.token);
           yield* room.sendInput(guest.welcome.token, FART);
           yield* play(1);
-          yield* Fiber.interrupt(guest.fiber);
+          yield* room.leave(guest.welcome.token);
           yield* play(4);
 
           const { frames, roster } = yield* drain(host.inbox);
@@ -469,6 +472,159 @@ describe("given a race in progress", () => {
           yield* room.restart(host.welcome.token);
           yield* play(1);
           expect((yield* framesIn(host.inbox)).at(-1)!.snapshot.crews[0]!.riders).toHaveLength(1);
+        }),
+      ));
+  });
+});
+
+describe("given a player whose connection drops", () => {
+  /** Ann hosts and Bo rides with her; Bo's stream then ends without a Leave, like a dead socket. */
+  const racingPair = Effect.gen(function* () {
+    const room = yield* newRoom;
+    const ann = yield* lease(room, "Ann");
+    const bo = yield* lease(room, "Bo");
+    yield* room.start(ann.welcome.token);
+    yield* room.sendInput(bo.welcome.token, FART);
+    yield* play(4);
+    yield* drain(ann.inbox);
+    yield* Fiber.interrupt(bo.fiber);
+    return { room, ann, bo };
+  });
+
+  describe("when the stream ends mid-race", () => {
+    it("should hold the seat away, keep the rider on the raft, and idle it", () =>
+      run(
+        Effect.gen(function* () {
+          const { ann } = yield* racingPair;
+          yield* play(2);
+          const { frames, roster } = yield* drain(ann.inbox);
+          expect(roster?.seats[1]).toMatchObject({ name: "Bo", away: true });
+          expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", 1)]);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(2);
+          expect(fartsIn(frames.slice(-20))).toEqual([]);
+        }),
+      ));
+  });
+
+  describe("when they rejoin with their token within the grace", () => {
+    it("should give back the same seat and token, and their rider farts again", () =>
+      run(
+        Effect.gen(function* () {
+          const { room, ann, bo } = yield* racingPair;
+          yield* TestClock.adjust("10 seconds");
+          const back = yield* lease(room, "Someone else", bo.welcome.token);
+          expect(back.welcome).toEqual(bo.welcome);
+          yield* room.sendInput(back.welcome.token, FART);
+          yield* play(2);
+          const { frames, roster } = yield* drain(ann.inbox);
+          expect(roster?.seats[1]).toMatchObject({ name: "Bo", away: false });
+          expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", 1)]);
+          const farts = fartsIn(frames);
+          expect(farts.length).toBeGreaterThan(0);
+          expect(farts.every((e) => e.type === "fart" && e.seat === 1)).toBe(true);
+        }),
+      ));
+
+    it("should keep the seat when the old stream's grace runs out after the rejoin", () =>
+      run(
+        Effect.gen(function* () {
+          const { room, ann, bo } = yield* racingPair;
+          yield* lease(room, "Bo", bo.welcome.token);
+          yield* TestClock.adjust("30 seconds");
+          expect((yield* latestRoster(ann.inbox)).seats[1]).toMatchObject({
+            name: "Bo",
+            away: false,
+          });
+        }),
+      ));
+  });
+
+  describe("when the grace runs out", () => {
+    it("should open the seat, leave the rider idle, and seat a late rejoin as a newcomer", () =>
+      run(
+        Effect.gen(function* () {
+          const { room, ann, bo } = yield* racingPair;
+          yield* TestClock.adjust("21 seconds");
+          const roster = yield* latestRoster(ann.inbox);
+          expect(roster.seats[1]).toBeNull();
+          expect(roster.crew).toEqual([rider("Ann", 0), rider("Bo", null, 1)]);
+          const late = yield* lease(room, "Bo", bo.welcome.token);
+          expect(late.welcome.seat).toBe(1);
+          expect(late.welcome.token).not.toBe(bo.welcome.token);
+        }),
+      ));
+  });
+
+  describe("when a token nobody holds is resumed", () => {
+    it("should seat the joiner as a newcomer", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const ann = yield* lease(room, "Ann");
+          const stranger = yield* lease(room, "Cy", "made-up");
+          expect(stranger.welcome.seat).toBe(1);
+          expect(stranger.welcome.token).not.toBe("made-up");
+          expect((yield* latestRoster(ann.inbox)).seats).toEqual(seated("Ann", "Cy"));
+        }),
+      ));
+  });
+
+  describe("when the host drops", () => {
+    it("should hand host to the longest-seated connected player, and back when they return", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const ann = yield* lease(room, "Ann");
+          const bo = yield* lease(room, "Bo");
+          yield* Fiber.interrupt(ann.fiber);
+          expect((yield* latestRoster(bo.inbox)).host).toBe(1);
+          yield* room.start(ann.welcome.token);
+          expect(yield* room.humans).toBe(1);
+
+          yield* lease(room, "Ann", ann.welcome.token);
+          expect((yield* latestRoster(bo.inbox)).host).toBe(0);
+        }),
+      ));
+  });
+
+  describe("when the room is full", () => {
+    it("should refuse a newcomer but let the away player back", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const first = yield* lease(room, "P1");
+          for (let i = 1; i < MAX_CREW; i++) yield* lease(room, `P${i + 1}`);
+          yield* Fiber.interrupt(first.fiber);
+          const error = yield* Effect.flip(Stream.runDrain(room.join("Eve")));
+          expect(error).toBeInstanceOf(RoomFull);
+          const back = yield* lease(room, "P1", first.welcome.token);
+          expect(back.welcome).toEqual(first.welcome);
+        }),
+      ));
+  });
+
+  describe("when the token is resumed while the server still sees it connected", () => {
+    it("should move the seat to the new stream and end the old one", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const ann = yield* lease(room, "Ann");
+          const again = yield* lease(room, "Ann", ann.welcome.token);
+          expect(again.welcome).toEqual(ann.welcome);
+          yield* Fiber.join(ann.fiber);
+          yield* TestClock.adjust("30 seconds");
+          expect((yield* latestRoster(again.inbox)).seats).toEqual(seated("Ann"));
+        }),
+      ));
+  });
+
+  describe("when an away player's seat is given up with Leave", () => {
+    it("should open it at once", () =>
+      run(
+        Effect.gen(function* () {
+          const { room, ann, bo } = yield* racingPair;
+          yield* room.leave(bo.welcome.token);
+          expect((yield* latestRoster(ann.inbox)).seats[1]).toBeNull();
         }),
       ));
   });

@@ -55,9 +55,21 @@ export type Connection = {
   setMode(mode: RoomMode): void;
   /** Frames that arrived before the handler was set are delivered first. */
   onFrame(handler: (frame: Frame) => void): void;
-  /** The seat is lost: the connection dropped or the server ended the stream. Not called after `close()`. */
+  /**
+   * The connection dropped or the server ended the stream. The server holds the seat away for
+   * `RECONNECT_GRACE_MS`, so `rejoin()` can take it back. Not called after `close()`.
+   */
   onClose(handler: (reason: string) => void): void;
-  /** Leaves the room: ends the Join stream (the server frees the seat) and stops all handlers. */
+  /**
+   * A new connection to the same room that takes this seat back (same seat, team and rider) while
+   * the server still holds it; once the seat has opened up it joins as a newcomer. Rejects like
+   * `connect`.
+   */
+  rejoin(): Promise<Connection>;
+  /**
+   * Leaves the room and stops all handlers. A live seat is given up at once (`Leave`); a lost one
+   * is left to the server's grace, so a `rejoin()` in flight still finds it.
+   */
   close(): void;
 };
 
@@ -73,6 +85,9 @@ const reasonFor = (cause: Cause.Cause<unknown>, code: string): string => {
 };
 
 const unreachable = (url: string) => new Error(`No answer from ${url}`);
+
+/** How long `close()` waits for the server to take the seat back before hanging up anyway. */
+const LEAVE_TIMEOUT_MS = 1000;
 
 /** Opens a new room on the server at `url` and returns its code. Nobody holds a seat yet. */
 export async function createRoom(
@@ -105,15 +120,16 @@ export async function createRoom(
 }
 
 /**
- * Joins room `code` as `name` in `look`. Resolves once the server has given us a seat and the room's
- * roster. Rejects if the room is full or gone, or the server is unreachable.
+ * Joins room `code` as `name` in `look`, or takes back the seat token `resume` holds. Resolves
+ * once the server has given us a seat and the room's roster. Rejects if the room is full or gone,
+ * or the server is unreachable.
  */
 export async function connect(
   url: string,
   code: string,
   name: string,
   look: Look,
-  timeoutMs = 5000,
+  { resume, timeoutMs = 5000 }: { resume?: string; timeoutMs?: number } = {},
 ): Promise<Connection> {
   const runtime = ManagedRuntime.make(clientLayer(url));
   let frameHandler: ((frame: Frame) => void) | undefined;
@@ -123,6 +139,8 @@ export async function connect(
   let welcome: Welcome | undefined;
   let roster: Roster | undefined;
   let closed = false;
+  /** The Join stream has ended: the seat is no longer ours to give up. */
+  let lost = false;
   let last: SeatInput | undefined;
 
   let seated!: () => void;
@@ -131,7 +149,8 @@ export async function connect(
     seated = resolve;
     refused = reject;
   });
-  const lost = (reason: string) => {
+  const lose = (reason: string) => {
+    lost = true;
     if (closed) return;
     refused(new Error(reason));
     closeHandler?.(reason);
@@ -139,7 +158,7 @@ export async function connect(
 
   const client = await runtime.runPromise(Effect.service(RaftClient));
   runtime.runFork(
-    client.Join({ code, name, look }).pipe(
+    client.Join({ code, name, look, resume }).pipe(
       Stream.runForEach((msg) =>
         Effect.sync(() =>
           ServerMsg.match(msg, {
@@ -163,13 +182,13 @@ export async function connect(
         ),
       ),
       Effect.matchCause({
-        onSuccess: () => lost("The server closed the connection"),
-        onFailure: (cause) => lost(reasonFor(cause, code)),
+        onSuccess: () => lose("The server closed the connection"),
+        onFailure: (cause) => lose(reasonFor(cause, code)),
       }),
     ),
   );
 
-  const timer = setTimeout(() => lost(unreachable(url).message), timeoutMs);
+  const timer = setTimeout(() => lose(unreachable(url).message), timeoutMs);
   try {
     await ready;
   } catch (error) {
@@ -223,13 +242,20 @@ export async function connect(
     onClose(handler) {
       closeHandler = handler;
     },
+    rejoin() {
+      const mine = roster?.seats[me.seat];
+      return connect(url, code, mine?.name ?? name, mine?.look ?? look, { resume: me.token });
+    },
     close() {
       if (closed) return;
       closed = true;
       frameHandler = closeHandler = undefined;
       rosterHandlers.clear();
       backlog.length = 0;
-      void runtime.dispose();
+      const leave = lost
+        ? Effect.void
+        : client.Leave(seat).pipe(Effect.timeout(LEAVE_TIMEOUT_MS), Effect.ignore);
+      void runtime.runPromise(leave).finally(() => runtime.dispose());
     },
   };
 }

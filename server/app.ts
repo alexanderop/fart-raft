@@ -14,9 +14,10 @@ const handlers = RaftRpcs.toLayer(
       lobby.find(code).pipe(Effect.flatMap(f), Effect.ignore);
     return RaftRpcs.of({
       CreateRoom: ({ course, difficulty, mode }) => lobby.create(course, difficulty, mode),
-      Join: ({ code, name, look }) =>
-        Stream.unwrap(lobby.find(code).pipe(Effect.map((room) => room.join(name, look)))),
+      Join: ({ code, name, look, resume }) =>
+        Stream.unwrap(lobby.find(code).pipe(Effect.map((room) => room.join(name, look, resume)))),
       SendInput: ({ code, token, input }) => inRoom(code, (r) => r.sendInput(token, input)),
+      Leave: ({ code, token }) => inRoom(code, (r) => r.leave(token)),
       Start: ({ code, token }) => inRoom(code, (r) => r.start(token)),
       Restart: ({ code, token }) => inRoom(code, (r) => r.restart(token)),
       ToLobby: ({ code, token }) => inRoom(code, (r) => r.toLobby(token)),

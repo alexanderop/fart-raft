@@ -737,6 +737,20 @@ button {
   background: #c0392b;
 }
 
+.banner-action {
+  margin-left: 8px;
+  padding: 4px 12px;
+  font: inherit;
+  font-weight: 900;
+  color: var(--outline);
+  background: #eef7fd;
+  border: 3px solid var(--outline);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--outline);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .menu-hint[hidden] {
   display: none;
 }

@@ -1,5 +1,6 @@
 import {
   Clock,
+  Deferred,
   Duration,
   Effect,
   Option,
@@ -15,6 +16,7 @@ import {
   isTeamMode,
   MAX_NAME,
   MAX_TEAM,
+  RECONNECT_GRACE_MS,
   RoomFull,
   ServerMsg,
   startBlocker,
@@ -35,16 +37,21 @@ import {
   type Snapshot,
 } from "../src/sim/types.ts";
 
-type Human = {
+/** Who holds a seat, connected or not: kept whole while they are away, so they come back as they were. */
+type Holder = { name: string; look: Look; team: Team; token: string; joined: number };
+/**
+ * Connected. `lease` names the Join stream holding the seat (each Join gets a new one), so a
+ * stream that ends after a newer one took the seat leaves it alone. Completing `ended` ends the stream.
+ */
+type Human = Holder & {
   kind: "human";
-  name: string;
-  look: Look;
-  team: Team;
-  token: string;
-  joined: number;
   input: SeatInput;
+  lease: number;
+  ended: Deferred.Deferred<void>;
 };
-type Seat = { kind: "empty" } | Human;
+/** Their Join stream ended: the seat is held for RECONNECT_GRACE_MS, then opens up. */
+type Away = Holder & { kind: "away"; lease: number };
+type Seat = { kind: "empty" } | Human | Away;
 /**
  * Who drives one rider for a whole race. Matched to a seat by token, so a leaver's rider idles
  * in the look it started the race with. `raft` is fixed at the start: a later team switch only
@@ -73,8 +80,13 @@ const everyStep = (tick: Effect.Effect<void>) =>
 
 export interface Room {
   readonly code: string;
-  /** The stream's lifetime is the seat lease: when it ends or is interrupted the seat opens up. */
-  readonly join: (name: string, look?: Look) => Stream.Stream<ServerMsg, RoomFull>;
+  /**
+   * The stream's lifetime is the seat lease: when it ends or is interrupted the seat is held away
+   * for RECONNECT_GRACE_MS, then opens up. `resume` takes back the seat that token holds.
+   */
+  readonly join: (name: string, look?: Look, resume?: string) => Stream.Stream<ServerMsg, RoomFull>;
+  /** Gives the token's seat up at once, connected or away. */
+  readonly leave: (token: string) => Effect.Effect<void>;
   readonly sendInput: (token: string, input: SeatInput) => Effect.Effect<void>;
   /** Only the host's token starts the race; anything else is ignored. */
   readonly start: (token: string) => Effect.Effect<void>;
@@ -88,6 +100,7 @@ export interface Room {
   readonly setTeam: (token: string, team: Team) => Effect.Effect<void>;
   /** Only the host's token changes how the next race is raced; anything else is ignored. */
   readonly setMode: (token: string, mode: RoomMode) => Effect.Effect<void>;
+  /** Connected humans: an away seat does not keep the room open. */
   readonly humans: Effect.Effect<number>;
 }
 
@@ -131,24 +144,37 @@ export function cleanName(raw: string, seat: number): string {
   return name === "" ? `Player ${seat + 1}` : name;
 }
 
+const isHeld = (s: Seat): s is Human | Away => s.kind !== "empty";
+const holderOf = ({ name, look, team, token, joined }: Holder): Holder => ({
+  name,
+  look,
+  team,
+  token,
+  joined,
+});
+
+/** The connected seat `token` proves, or -1: only a connected player's RPCs count. */
 const seatOf = (table: readonly Seat[], token: string) =>
   table.findIndex((s) => s.kind === "human" && s.token === token);
+/** The seat `token` holds, connected or away, or -1. */
+const heldSeatOf = (table: readonly Seat[], token: string) =>
+  table.findIndex((s) => isHeld(s) && s.token === token);
+
+const teamCount = (table: readonly Seat[], team: Team) =>
+  table.filter((s) => isHeld(s) && s.team === team).length;
 
 /** The team a newcomer joins: the one with fewer players, Red on a tie. */
-const smallerTeam = (table: readonly Seat[]): Team => {
-  const blue = table.filter((s) => s.kind === "human" && s.team === 1).length;
-  const red = table.filter((s) => s.kind === "human" && s.team === 0).length;
-  return blue < red ? 1 : 0;
-};
+const smallerTeam = (table: readonly Seat[]): Team =>
+  teamCount(table, 1) < teamCount(table, 0) ? 1 : 0;
 
-const ridersOf = (humans: readonly Human[], raft: number): Rider[] =>
+const ridersOf = (humans: readonly Holder[], raft: number): Rider[] =>
   humans.map((s) => ({ token: s.token, name: s.name, look: s.look, raft }));
 
 /**
  * Everyone seated, in seat order on raft 0 in co-op; in a team room Red's riders on raft 0 then
  * Blue's on raft 1, each in seat order.
  */
-const crewFor = (humans: readonly Human[], mode: RoomMode): Rider[] =>
+const crewFor = (humans: readonly Holder[], mode: RoomMode): Rider[] =>
   isTeamMode(mode)
     ? [
         ...ridersOf(
@@ -173,9 +199,11 @@ const hostOf = (seats: readonly Seat[]): number | null => {
 
 /**
  * A room starts in the lobby: players join and see each other, nothing is simulated. The host's
- * Start creates the race with everyone seated as its crew (split by team in a team room, which
- * needs a rider on both); a mid-race joiner watches until a
- * restart rebuilds the crew; from then on it ticks at 60 Hz while at least one human is seated.
+ * Start creates the race with everyone seated (away ones too) as its crew (split by team in a team
+ * room, which needs a rider on both); a mid-race joiner watches until a restart rebuilds the
+ * crew; from then on it ticks at 60 Hz while at least one connected human is seated. A seat whose
+ * Join stream ends is held away for RECONNECT_GRACE_MS: a Join that resumes its token takes it
+ * back, rider and all.
  * Physics must be initialised (`initPhysics`) before the race starts. Lives as long as its scope.
  */
 export const makeRoom = (
@@ -191,7 +219,9 @@ export const makeRoom = (
     const seats = yield* Ref.make<readonly Seat[]>(Array.from({ length: MAX_CREW }, () => empty));
     const race = yield* Ref.make<Race | undefined>(undefined);
     const modeRef = yield* Ref.make(initialMode);
+    const scope = yield* Effect.scope;
     let joins = 0;
+    let leases = 0;
 
     const rosterOf = (
       table: readonly Seat[],
@@ -203,14 +233,14 @@ export const makeRoom = (
       difficulty,
       mode,
       seats: table.map((s) =>
-        s.kind === "human" ? { name: s.name, look: s.look, team: s.team } : null,
+        isHeld(s) ? { name: s.name, look: s.look, team: s.team, away: s.kind === "away" } : null,
       ),
       host: hostOf(table),
       started: current !== undefined,
       crew: (current?.crew ?? []).map((r) => {
-        const seat = seatOf(table, r.token);
-        const human = table[seat];
-        const look = human?.kind === "human" ? human.look : r.look;
+        const seat = heldSeatOf(table, r.token);
+        const holder = table[seat];
+        const look = holder && isHeld(holder) ? holder.look : r.look;
         return { name: r.name, seat: seat < 0 ? null : seat, look, raft: r.raft };
       }),
     });
@@ -231,7 +261,7 @@ export const makeRoom = (
     const tick = Effect.gen(function* () {
       const current = yield* Ref.get(race);
       const table = yield* Ref.get(seats);
-      // Nobody watching: hold the race where it is until someone comes back.
+      // Nobody connected: hold the race where it is until someone comes back.
       if (!current || !table.some((s) => s.kind === "human")) return;
       const frame = current.tick(table);
       if (frame) yield* PubSub.publish(frames, frame);
@@ -239,10 +269,7 @@ export const makeRoom = (
     yield* Effect.forkScoped(everyStep(tick));
 
     const crewOf = (table: readonly Seat[], mode: RoomMode): Rider[] =>
-      crewFor(
-        table.filter((s) => s.kind === "human"),
-        mode,
-      );
+      crewFor(table.filter(isHeld), mode);
 
     /** A new race for everyone seated now, or undefined while a team room lacks a rider on a team. */
     const freshRace = Effect.gen(function* () {
@@ -252,44 +279,117 @@ export const makeRoom = (
       return newRace(level, difficulty, mode, crewOf(table, mode));
     });
 
-    const claimSeat = (name: string, look: Look | undefined, token: string) =>
+    /** The seat a Join holds, and the stream it displaced (a resume of a seat still connected). */
+    type Claim = {
+      seat: number;
+      token: string;
+      lease: number;
+      displaced?: Deferred.Deferred<void>;
+    };
+
+    /**
+     * Takes back the seat `resume` holds, connected or away, as it was; else the first empty one.
+     * The token lives only in the page that joined, so a resume of a seat the server still sees
+     * connected is that page back on a new socket before the old one timed out: the newest wins.
+     */
+    const claimSeat = (
+      name: string,
+      look: Look | undefined,
+      resume: string | undefined,
+      ended: Deferred.Deferred<void>,
+    ) =>
       Ref.modify(seats, (table) => {
+        const lease = leases++;
+        const back = resume === undefined ? -1 : heldSeatOf(table, resume);
+        const was = table[back];
+        if (was && isHeld(was)) {
+          const human: Human = { ...holderOf(was), kind: "human", input: IDLE_INPUT, lease, ended };
+          const displaced = was.kind === "human" ? was.ended : undefined;
+          const claim: Claim = { seat: back, token: was.token, lease, displaced };
+          return [Option.some(claim), table.with(back, human)] as const;
+        }
         const free = table.findIndex((s) => s.kind === "empty");
-        if (free < 0) return [Option.none<number>(), table] as const;
+        if (free < 0) return [Option.none<Claim>(), table] as const;
         const human: Human = {
           kind: "human",
           name: cleanName(name, free),
           look: look ?? defaultLook(free),
           team: smallerTeam(table),
-          token,
+          token: crypto.randomUUID(),
           joined: joins++,
           input: IDLE_INPUT,
+          lease,
+          ended,
         };
-        return [Option.some(free), table.with(free, human)] as const;
+        const claim: Claim = { seat: free, token: human.token, lease };
+        return [Option.some(claim), table.with(free, human)] as const;
       }).pipe(
         Effect.flatMap(
           Option.match({ onNone: () => Effect.fail(new RoomFull()), onSome: Effect.succeed }),
         ),
+        Effect.tap((claim) =>
+          claim.displaced ? Deferred.succeed(claim.displaced, undefined) : Effect.void,
+        ),
         Effect.tap(() => publishRoster),
       );
 
-    const releaseSeat = (seat: number) =>
-      Ref.update(seats, (table) => table.with(seat, empty)).pipe(Effect.andThen(publishRoster));
+    /** Empties `seat` if it still matches; a no-op otherwise, so a late or repeated call is harmless. */
+    const vacate = (seat: number, still: (s: Seat) => boolean) =>
+      Ref.modify(seats, (table) => {
+        const s = table[seat];
+        return s && still(s)
+          ? ([true, table.with(seat, empty)] as const)
+          : ([false, table] as const);
+      }).pipe(Effect.flatMap((changed) => (changed ? publishRoster : Effect.void)));
 
-    const join = (name: string, look?: Look) =>
+    /** The lease's stream ended: hold its seat away, and open it up after the grace unless it came back. */
+    const goAway = Effect.fnUntraced(function* ({ seat, lease }: Claim) {
+      const away = yield* Ref.modify(seats, (table) => {
+        const s = table[seat];
+        if (s?.kind !== "human" || s.lease !== lease) return [false, table] as const;
+        return [
+          true,
+          table.with(seat, { ...holderOf(s), kind: "away", lease } satisfies Away),
+        ] as const;
+      });
+      if (!away) return;
+      yield* publishRoster;
+      const stillAway = (s: Seat) => s.kind === "away" && s.lease === lease;
+      yield* Effect.forkIn(
+        Effect.sleep(RECONNECT_GRACE_MS).pipe(Effect.andThen(vacate(seat, stillAway))),
+        scope,
+      );
+    });
+
+    const join = (name: string, look?: Look, resume?: string) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const token = crypto.randomUUID();
-          const seat = yield* Effect.acquireRelease(claimSeat(name, look, token), releaseSeat);
+          const ended = yield* Deferred.make<void>();
+          const claim = yield* Effect.acquireRelease(claimSeat(name, look, resume, ended), goAway);
           const subscription = yield* PubSub.subscribe(frames);
           const rosters = SubscriptionRef.changes(roster).pipe(
             Stream.map((r) => ServerMsg.cases.Roster.make({ roster: r })),
           );
-          return Stream.make(ServerMsg.cases.Welcome.make({ seat, token })).pipe(
+          const welcome = ServerMsg.cases.Welcome.make({ seat: claim.seat, token: claim.token });
+          return Stream.make(welcome).pipe(
             Stream.concat(Stream.merge(rosters, Stream.fromSubscription(subscription))),
+            Stream.interruptWhen(Deferred.await(ended)),
           );
         }),
       );
+
+    const leave = Effect.fn("Room.leave")(function* (token: string) {
+      const left = yield* Ref.modify(seats, (table) => {
+        const seat = heldSeatOf(table, token);
+        const s = table[seat];
+        return s && isHeld(s)
+          ? ([s, table.with(seat, empty)] as const)
+          : ([undefined, table] as const);
+      });
+      if (!left) return;
+      if (left.kind === "human") yield* Deferred.succeed(left.ended, undefined);
+      yield* publishRoster;
+    });
 
     const sendInput = Effect.fn("Room.sendInput")(function* (token: string, input: SeatInput) {
       // Only a seated human's own token counts: a stray message must not steer anyone else.
@@ -362,7 +462,7 @@ export const makeRoom = (
         const seat = seatOf(table, token);
         const human = table[seat];
         if (human?.kind !== "human" || human.team === team) return [false, table] as const;
-        const full = table.filter((s) => s.kind === "human" && s.team === team).length >= MAX_TEAM;
+        const full = teamCount(table, team) >= MAX_TEAM;
         return full
           ? ([false, table] as const)
           : ([true, table.with(seat, { ...human, team })] as const);
@@ -382,5 +482,17 @@ export const makeRoom = (
       Effect.map((table) => table.filter((s) => s.kind === "human").length),
     );
 
-    return { code, join, sendInput, start, restart, toLobby, setLook, setTeam, setMode, humans };
+    return {
+      code,
+      join,
+      leave,
+      sendInput,
+      start,
+      restart,
+      toLobby,
+      setLook,
+      setTeam,
+      setMode,
+      humans,
+    };
   });

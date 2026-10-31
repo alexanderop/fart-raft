@@ -75,7 +75,7 @@ const roomWith = (mode: Roster["mode"], teams: (0 | 1)[], crew: Roster["crew"] =
   course: "pond",
   difficulty: "chill",
   mode,
-  seats: teams.map((team, i) => ({ name: `P${i}`, look, team })),
+  seats: teams.map((team, i) => ({ name: `P${i}`, look, team, away: false })),
   host: 0,
   started: crew.length > 0,
   crew,

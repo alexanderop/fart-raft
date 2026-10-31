@@ -20,7 +20,7 @@ import { appLayer } from "./app.ts";
 const level = parseLevel(pond);
 const look = defaultLook(0);
 /** A seated player in the look every test joins with. */
-const player = (name: string, team: 0 | 1 = 0) => ({ name, look, team });
+const player = (name: string, team: 0 | 1 = 0) => ({ name, look, team, away: false });
 /** `n` open seats in a roster. */
 const open = (n: number): null[] => Array(n).fill(null);
 const serverLayer = appLayer({ canyon: level, graveyard: level, pond: level }).pipe(
@@ -174,6 +174,46 @@ describe("given the server listening on a free port", () => {
           expect((await switched).mode).toBe("bump");
           host.close();
           guest.close();
+        }),
+      ));
+  });
+
+  describe("when a browser client leaves with close()", () => {
+    it("should open its seat at once instead of holding it for a reconnect", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          const code = await createRoom(url, "pond", "chill");
+          const host = await connect(url, code, "Ann", look);
+          const guest = await connect(url, code, "Bo", look);
+          const left = new Promise<Roster>((resolve) =>
+            guest.onRoster((r) => r.seats[0] === null && resolve(r)),
+          );
+          host.close();
+          expect((await left).host).toBe(1);
+          guest.close();
+        }),
+      ));
+  });
+
+  describe("when a browser client rejoins its seat", () => {
+    it("should get the same seat back on a new connection and end the old one", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          const code = await createRoom(url, "pond", "chill");
+          const host = await connect(url, code, "Ann", look);
+          const guest = await connect(url, code, "Bo", look);
+          const ended = new Promise<string>((resolve) => guest.onClose(resolve));
+          const back = await guest.rejoin();
+          expect(back.seat).toBe(1);
+          expect(await ended).toBe("The server closed the connection");
+          expect(back.roster().seats).toEqual([
+            player("Ann"),
+            player("Bo", 1),
+            ...open(MAX_CREW - 2),
+          ]);
+          guest.close();
+          back.close();
+          host.close();
         }),
       ));
   });

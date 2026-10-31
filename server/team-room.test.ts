@@ -1,4 +1,4 @@
-import { Effect, Fiber } from "effect";
+import { Effect } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 import { placeOf, type RoomMode, type Roster } from "../src/net/protocol.ts";
@@ -44,7 +44,7 @@ for (const mode of ["ghost", "bump"] as const satisfies RoomMode[]) {
             const ann = yield* lease(room, "Ann");
             const bo = yield* lease(room, "Bo");
             yield* lease(room, "Cy");
-            yield* Fiber.interrupt(bo.fiber);
+            yield* room.leave(bo.welcome.token);
             yield* lease(room, "Di");
             expect(teamsOf(yield* latestRoster(ann.inbox)).slice(0, 4)).toEqual([0, 1, 0, null]);
           }),
@@ -259,7 +259,7 @@ for (const mode of ["ghost", "bump"] as const satisfies RoomMode[]) {
             yield* room.start(ann.welcome.token);
             yield* room.sendInput(bo.welcome.token, FART);
             yield* play(1);
-            yield* Fiber.interrupt(bo.fiber);
+            yield* room.leave(bo.welcome.token);
             yield* play(2);
             const { frames, roster } = yield* drain(ann.inbox);
             const last = frames.at(-1)!.snapshot;

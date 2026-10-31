@@ -259,7 +259,11 @@ export function showRoom(
 
   /** One player's line; your own is a button that opens the wardrobe. */
   const playerItem = (roster: Roster, player: Player, i: number) => {
-    const tags = [i === roster.host ? "👑" : "", i === conn.seat ? "(you)" : ""].join(" ");
+    const tags = [
+      i === roster.host ? "👑" : "",
+      i === conn.seat ? "(you)" : "",
+      player.away ? "<small>reconnecting…</small>" : "",
+    ].join(" ");
     const badge = `<span class="menu-dress-badge">${lookBadge(player.look)}</span>`;
     const name = `${badge}<span><b>${escapeHtml(player.name)}</b> ${tags}</span>`;
     if (i !== conn.seat) {

@@ -4,7 +4,7 @@ import pond from "../../courses/pond.json";
 import { listenKeyboard } from "../input/keyboard.ts";
 import { createTouchControls } from "../input/touch.ts";
 import type { Connection } from "../net/client.ts";
-import { isCourseName, type CourseName } from "../net/protocol.ts";
+import { isCourseName, RECONNECT_GRACE_MS, type CourseName } from "../net/protocol.ts";
 import { STEP } from "../sim/constants.ts";
 import { parseLevel } from "../sim/level.ts";
 import { initPhysics } from "../sim/sim.ts";
@@ -27,6 +27,15 @@ import {
 
 // State pattern, same shape as sim/flow.ts: a union plus a switch. Each state owns what it puts
 // on the page (DOM, listeners, session, race); leaving it runs its cleanups, newest first.
+
+/**
+ * After a drop, how long to keep rejoining on our own: stops short of the server's grace, so a
+ * last attempt (up to its timeout) still finds the seat held.
+ */
+const RETRY_FOR_MS = RECONNECT_GRACE_MS - 5000;
+/** Waits between rejoin attempts: doubling from the first, capped. */
+const RETRY_FIRST_MS = 250;
+const RETRY_MAX_MS = 4000;
 
 /** Local play picks a course with `?course=`; online, the room's creator picked it. */
 const COURSES: Record<CourseName, unknown> = { canyon, graveyard, pond };
@@ -80,6 +89,57 @@ export function startApp(host: HTMLElement): void {
     go({ kind: "menu" });
   };
 
+  /**
+   * For an online state (room, loading, racing): when `conn` drops, say so and rejoin the same
+   * seat on our own while the server holds it; back in, it is the `room` state again with the new
+   * connection, which re-enters the race on its first frame. Out of tries, a Reconnect button tries
+   * once more (a newcomer's seat if ours has opened up) and Esc goes to the menu.
+   */
+  function holdSeat(conn: Connection, invite: string, live: () => boolean): void {
+    let hide: (() => void) | undefined;
+    let timer = 0;
+    own(() => {
+      clearTimeout(timer);
+      hide?.();
+    });
+    const say = (
+      text: string,
+      tone: "info" | "error",
+      action?: Parameters<typeof showBanner>[3],
+    ) => {
+      hide?.();
+      hide = showBanner(host, text, tone, action);
+    };
+    const attempt = async (until: number, wait: number) => {
+      try {
+        const next = await conn.rejoin();
+        // Esc (or anything else) moved on while we were rejoining: give the new seat up.
+        if (!live()) return next.close();
+        go({ kind: "room", conn: next, invite });
+      } catch {
+        if (!live()) return;
+        if (Date.now() + wait < until) {
+          timer = window.setTimeout(() => attempt(until, Math.min(wait * 2, RETRY_MAX_MS)), wait);
+          return;
+        }
+        say("Connection lost · Esc for menu", "error", {
+          label: "Reconnect",
+          run: () => {
+            say("Reconnecting…", "info");
+            void attempt(0, 0);
+          },
+        });
+      }
+    };
+    conn.onClose(() => {
+      say("Connection lost · Reconnecting…", "info");
+      timer = window.setTimeout(
+        () => attempt(Date.now() + RETRY_FOR_MS, RETRY_FIRST_MS * 2),
+        RETRY_FIRST_MS,
+      );
+    });
+  }
+
   function launched(launch: Launch): AppState {
     if (launch.kind === "online")
       return { kind: "online", server: launch.server, room: launch.room };
@@ -128,11 +188,10 @@ export function startApp(host: HTMLElement): void {
             if (e.code === "Escape") toMenu();
           }),
         );
+        holdSeat(conn, state.invite, live);
         const level = parseLevel(COURSES[conn.roster().course]);
-        const onLost = (reason: string) =>
-          own(showBanner(host, `${reason} · Esc for menu`, "error"));
         // Resolves on the first frame: the host started, or we joined mid-race.
-        void onlineSession(conn, heading, onLost).then((session) => {
+        void onlineSession(conn, heading).then((session) => {
           if (!live()) return session.dispose();
           handedOff = true;
           go({
@@ -190,6 +249,7 @@ export function startApp(host: HTMLElement): void {
       own(() => {
         if (!handedOff) conn.close();
       });
+      holdSeat(conn, invite, live);
       // The host sent the room back to its lobby: same connection, same seat, no reload.
       own(
         conn.onRoster((roster) => {

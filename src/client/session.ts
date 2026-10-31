@@ -204,14 +204,9 @@ type Received = {
 /**
  * Race on a seat already joined in the lobby. Resolves once the first frame is in, which is when
  * the host starts the race (or at once when joining mid-race), so there is always something to
- * draw. `onLost` fires if the seat is lost afterwards.
+ * draw. The app owns the connection, and what happens when it drops.
  */
-export async function onlineSession(
-  conn: Connection,
-  heading: Heading,
-  onLost: (reason: string) => void,
-): Promise<Session> {
-  conn.onClose(onLost);
+export async function onlineSession(conn: Connection, heading: Heading): Promise<Session> {
   // Online there is one seat: keyboard, touch and the first pad all drive it.
   const source = mergeSources(
     mergeSources(keyboardSource(WASD_OR_ARROWS, heading), touchSource(heading)),
@@ -220,7 +215,15 @@ export async function onlineSession(
   // The race's crew can differ from the lobby seats: label our raft's riders, and find ours, by `crew`.
   let roster = conn.roster();
   const labelsOf = (raft: number) =>
-    roster.crew.filter((c) => c.raft === raft).map((c) => (c.seat === conn.seat ? "You" : c.name));
+    roster.crew
+      .filter((c) => c.raft === raft)
+      .map((c) =>
+        c.seat === conn.seat
+          ? "You"
+          : roster.seats[c.seat ?? -1]?.away
+            ? `${c.name} · reconnecting…`
+            : c.name,
+      );
   let looks = looksOf(roster);
   let rider = placeOf(roster, conn.seat)?.rider ?? -1;
   const stopRoster = conn.onRoster((next) => {

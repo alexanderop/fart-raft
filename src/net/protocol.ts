@@ -145,10 +145,23 @@ export const contactOf = (mode: RoomMode): typeof Contact.Type =>
   mode === "bump" ? "bump" : "ghost";
 
 /**
+ * How long a seat whose connection dropped is held for its player to come back (`Join` with
+ * `resume`). Long enough for a Wi-Fi blip or a phone waking up, short enough that a player who is
+ * gone for good frees the seat before the lobby's room sweep (two empty 30 s sweeps) closes the room.
+ */
+export const RECONNECT_GRACE_MS = 20_000;
+
+/**
  * A seated player as everyone sees them. Every player has a team, even in a co-op room (which
  * ignores it), so a host who switches the room to a team mode finds the room already split.
+ * `away`: their connection dropped and the seat is held for `RECONNECT_GRACE_MS`.
  */
-export const Player = Schema.Struct({ name: Schema.String, look: Look, team: Team });
+export const Player = Schema.Struct({
+  name: Schema.String,
+  look: Look,
+  team: Team,
+  away: Schema.Boolean,
+});
 export type Player = typeof Player.Type;
 
 /**
@@ -171,7 +184,7 @@ export const Roster = Schema.Struct({
   /** How the next race is raced: the host can change it any time, a race under way keeps its own. */
   mode: RoomMode,
   seats: Schema.mutable(Schema.Array(Schema.NullOr(Player))),
-  /** The human who can start the race: whoever has been in the room longest. */
+  /** The human who can start the race: whoever connected has been in the room longest. */
   host: Schema.NullOr(SeatIndex),
   started: Schema.Boolean,
   /**
@@ -235,14 +248,22 @@ export const RaftRpcs = RpcGroup.make(
     success: RoomCode,
     error: ServerBusy,
   }),
-  // The stream's lifetime is the seat lease: ending it opens the seat up again.
+  // The stream's lifetime is the seat lease: when it ends the seat is held, away, for
+  // RECONNECT_GRACE_MS. `resume` is the token of a seat held for us: we take it back as it was.
   Rpc.make("Join", {
-    payload: { code: RoomCode, name: PlayerName, look: Look },
+    payload: {
+      code: RoomCode,
+      name: PlayerName,
+      look: Look,
+      resume: Schema.optional(Schema.String),
+    },
     success: ServerMsg,
     error: Schema.Union([RoomFull, RoomNotFound]),
     stream: true,
   }),
   Rpc.make("SendInput", { payload: { ...Seated, input: SeatInput } }),
+  /** Gives the seat up now, instead of holding it away for a reconnect. */
+  Rpc.make("Leave", { payload: Seated }),
   /** Host only: leave the lobby and start the countdown. */
   Rpc.make("Start", { payload: Seated }),
   /** Any seated player: a new race whose crew is everyone seated now. */

@@ -36,11 +36,14 @@ export const roomOf = (mode: RoomMode) =>
     return yield* lobby.find(yield* lobby.create("pond", "chill", mode));
   });
 
-/** One client holding a seat: everything the server streams to it lands in `inbox`. */
-export const lease = (room: Room, name = "Ann") =>
+/**
+ * One client holding a seat: everything the server streams to it lands in `inbox`. `resume` is a
+ * token from an earlier lease, to take its seat back.
+ */
+export const lease = (room: Room, name = "Ann", resume?: string) =>
   Effect.gen(function* () {
     const inbox = yield* Queue.unbounded<ServerMsg>();
-    const fiber = yield* room.join(name).pipe(
+    const fiber = yield* room.join(name, undefined, resume).pipe(
       Stream.runForEach((msg) => Queue.offer(inbox, msg)),
       Effect.forkScoped,
     );
