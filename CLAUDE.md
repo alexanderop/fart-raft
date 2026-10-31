@@ -18,6 +18,7 @@ pnpm blender    # open assets-src/fart-raft.blend with the MCP server auto-start
 pnpm kit        # headless Blender: build_kit.py → export_kit.py → public/models/kit.glb
 pnpm course     # scripts/canyon.ts → courses/canyon.json (the course the client plays)
 pnpm graveyard  # scripts/graveyard.ts → courses/graveyard.json (wide pools, octagon islands, logs and bumpers)
+pnpm bench:rooms # scripts/bench-rooms.ts: 50 team rooms (4 vs 4) stepped on one thread against the 16.7 ms/tick budget (--rooms, --course, --ticks, --runs)
 ```
 
 Toolchain is **Vite+** (`vite-plus`, `vp`): lint/fmt/test config all live in `vite.config.ts`. Import test APIs from `vite-plus/test`, not `vitest` (enforced by `vite-plus/prefer-vite-plus-imports`). The pre-commit hook runs `vp staged`.
