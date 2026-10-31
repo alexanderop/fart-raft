@@ -163,6 +163,22 @@ const STUCK_SPEED = 0.6; // m/s: slower than this counts as stuck…
 const STUCK_AFTER = 1; // …for this many seconds
 const ESCAPE_FOR = 1.5; // then back off the nearest obstacle for this long
 
+/** Pinned against a rock or bank: `watching` counts seconds crawling, `escaping` backs off. */
+type Unstick = { kind: "watching"; slowFor: number } | { kind: "escaping"; left: number };
+
+const WATCHING: Unstick = { kind: "watching", slowFor: 0 };
+
+/** One tick: `slow` = barely moving while not waiting on purpose. */
+function unstick(state: Unstick, slow: boolean): Unstick {
+  if (state.kind === "escaping")
+    return state.left - STEP > 0 ? { kind: "escaping", left: state.left - STEP } : WATCHING;
+  if (!slow) return WATCHING;
+  const slowFor = state.slowFor + STEP;
+  return slowFor > STUCK_AFTER
+    ? { kind: "escaping", left: ESCAPE_FOR }
+    : { kind: "watching", slowFor };
+}
+
 /** Back off the closest wall while sliding along it toward the gate. */
 function escapeForce(walls: readonly Box[], snap: View, target: Vec, t: BotTuning): Vec {
   const { raft } = snap;
@@ -222,8 +238,7 @@ export function botSource(
   let bestS = -Infinity;
   let progressAt = 0;
   let goUntil = 0;
-  let slowFor = 0;
-  let escapeLeft = 0;
+  let stuck = WATCHING;
 
   return {
     read(): SeatInput {
@@ -238,7 +253,8 @@ export function botSource(
         plannedAt = -Infinity;
         bestS = -Infinity;
         progressAt = snap.tick;
-        goUntil = slowFor = escapeLeft = 0;
+        goUntil = 0;
+        stuck = WATCHING;
         return IDLE_INPUT;
       }
       const gate = level.checkpoints[snap.phase.nextCheckpoint];
@@ -291,14 +307,10 @@ export function botSource(
       // Stuck against a rock or bank: steering toward the gate keeps pinning us there. A crew
       // holding still on purpose, waiting for a hazard to come round, is not stuck.
       const waiting = plan !== null && plan.holdFor > 0 && Math.abs(plan.pace) < STUCK_SPEED;
-      if (escapeLeft > 0) escapeLeft -= STEP;
-      else if (prev && !waiting && Math.hypot(vel.x, vel.y) < STUCK_SPEED) {
-        slowFor += STEP;
-        if (slowFor > STUCK_AFTER) {
-          escapeLeft = ESCAPE_FOR;
-          slowFor = 0;
-        }
-      } else slowFor = 0;
+      stuck = unstick(
+        stuck,
+        prev !== undefined && !waiting && Math.hypot(vel.x, vel.y) < STUCK_SPEED,
+      );
 
       // Crossing a hazard: the planned pace along the lane, and whatever sideways speed gets into it.
       let hold: Vec | null = null;
@@ -321,7 +333,7 @@ export function botSource(
         };
       }
       const force =
-        escapeLeft > 0
+        stuck.kind === "escaping"
           ? escapeForce(walls, snap, target, tuning)
           : desiredForce(
               walls,
