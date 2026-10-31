@@ -9,7 +9,7 @@ import {
   CODE_LETTERS,
   isCourseName,
   MAX_NAME,
-  riderOf,
+  placeOf,
   type CourseName,
   type Roster,
 } from "../../net/protocol.ts";
@@ -308,7 +308,7 @@ export function showRoom(
 export function showSpectating(host: HTMLElement, conn: Connection): () => void {
   let hide: (() => void) | undefined;
   const render = (roster: Roster) => {
-    const watching = roster.started && riderOf(roster, conn.seat) < 0;
+    const watching = roster.started && placeOf(roster, conn.seat) === null;
     if (watching && !hide) {
       hide = showBanner(host, "Watching this race · you ride in the next one", "info");
     } else if (!watching && hide) {

@@ -1,21 +1,35 @@
-import { Effect, Fiber, Layer, Queue, Stream, type Scope } from "effect";
+import { Effect, Fiber, Queue, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
-import pond from "../courses/pond.json";
-import { RoomFull, RoomNotFound, ServerMsg, type Frame } from "../src/net/protocol.ts";
+import { RoomFull, RoomNotFound, ServerMsg } from "../src/net/protocol.ts";
 import { defaultLook } from "../src/look.ts";
 import { MAX_CREW } from "../src/sim/constants.ts";
-import { parseLevel } from "../src/sim/level.ts";
-import type { SeatInput } from "../src/sim/types.ts";
-import { Lobby, lobbyLayer } from "./lobby.ts";
-import { cleanName, type Room } from "./room.ts";
+import { Lobby } from "./lobby.ts";
+import { cleanName } from "./room.ts";
+import {
+  drain,
+  FART,
+  fartsIn,
+  framesIn,
+  latestRoster,
+  lease,
+  play,
+  roomOf,
+  run,
+} from "./testing.ts";
 
-const level = parseLevel(pond);
-const COURSES = { canyon: level, graveyard: level, pond: level };
-const FART: SeatInput = { move: { x: 0, y: 0 }, fart: true };
-/** A roster's seats: these players first, in their seat's default look, the rest open. */
+const newRoom = roomOf("coop");
+
+/**
+ * A roster's seats: these players first, in their seat's default look, the rest open. Joiners
+ * alternate Red, Blue, Red, ... (each takes the team with fewer players).
+ */
 const seated = (...names: string[]) => [
-  ...names.map((name, i) => ({ name, look: defaultLook(i) })),
+  ...names.map((name, i) => ({
+    name,
+    look: defaultLook(i),
+    team: i % 2 === 0 ? (0 as const) : (1 as const),
+  })),
   ...Array(MAX_CREW - names.length).fill(null),
 ];
 /** A crew member who joined without picking a look. */
@@ -23,68 +37,8 @@ const rider = (name: string, seat: number | null, lookSeat = seat ?? 0) => ({
   name,
   seat,
   look: defaultLook(lookSeat),
+  raft: 0,
 });
-
-/** Runs on a TestClock, so each room's 60 Hz loop only moves when the test advances time. */
-const run = <A, E>(test: Effect.Effect<A, E, Lobby | Scope.Scope>) =>
-  Effect.runPromise(
-    test.pipe(
-      Effect.scoped,
-      Effect.provide(
-        lobbyLayer(COURSES, { sweepEvery: "30 seconds" }).pipe(
-          Layer.provideMerge(TestClock.layer()),
-        ),
-      ),
-    ),
-  );
-
-const newRoom = Effect.gen(function* () {
-  const lobby = yield* Lobby;
-  return yield* lobby.find(yield* lobby.create("pond", "chill"));
-});
-
-/** One client holding a seat: everything the server streams to it lands in `inbox`. */
-const lease = (room: Room, name = "Ann") =>
-  Effect.gen(function* () {
-    const inbox = yield* Queue.unbounded<ServerMsg>();
-    const fiber = yield* room.join(name).pipe(
-      Stream.runForEach((msg) => Queue.offer(inbox, msg)),
-      Effect.forkScoped,
-    );
-    const welcome = yield* Queue.take(inbox);
-    if (!ServerMsg.guards.Welcome(welcome)) throw new Error("expected Welcome first");
-    return { inbox, fiber, welcome };
-  });
-
-/** The newest roster in the inbox, after letting the room's fibers run. */
-const latestRoster = (inbox: Queue.Queue<ServerMsg>) =>
-  Effect.gen(function* () {
-    yield* TestClock.adjust("1 millis");
-    const latest = (yield* Queue.clear(inbox)).filter(ServerMsg.guards.Roster).at(-1);
-    if (!latest) throw new Error("no roster since the last look");
-    return latest.roster;
-  });
-
-/** Advance in frame-sized steps so the lease's consumer drains each frame before the next. */
-const play = (seconds: number) =>
-  Effect.forEach(Array.from({ length: seconds * 20 }), () => TestClock.adjust("50 millis"), {
-    discard: true,
-  });
-
-const framesIn = (inbox: Queue.Queue<ServerMsg>) =>
-  Queue.clear(inbox).pipe(Effect.map((msgs) => msgs.filter(ServerMsg.guards.Frame)));
-
-/** Everything since the last look: the frames, and the newest roster (if one came). */
-const drain = (inbox: Queue.Queue<ServerMsg>) =>
-  Queue.clear(inbox).pipe(
-    Effect.map((msgs) => ({
-      frames: msgs.filter(ServerMsg.guards.Frame),
-      roster: msgs.filter(ServerMsg.guards.Roster).at(-1)?.roster,
-    })),
-  );
-
-const fartsIn = (frames: readonly Frame[]) =>
-  frames.flatMap((f) => f.events).filter((e) => e.type === "fart");
 
 describe("given the lobby", () => {
   describe("when a room is created", () => {
@@ -92,7 +46,7 @@ describe("given the lobby", () => {
       run(
         Effect.gen(function* () {
           const lobby = yield* Lobby;
-          const code = yield* lobby.create("graveyard", "chill");
+          const code = yield* lobby.create("graveyard", "chill", "coop");
           expect(code).toMatch(/^[A-Z]{4}$/);
           const room = yield* lobby.find(code.toLowerCase());
           expect(room.code).toBe(code);
@@ -105,7 +59,7 @@ describe("given the lobby", () => {
       run(
         Effect.gen(function* () {
           const lobby = yield* Lobby;
-          const room = yield* lobby.find(yield* lobby.create("pond", "wild"));
+          const room = yield* lobby.find(yield* lobby.create("pond", "wild", "coop"));
           const { inbox, welcome } = yield* lease(room);
           expect(yield* latestRoster(inbox)).toMatchObject({ difficulty: "wild" });
           yield* room.start(welcome.token);
@@ -131,7 +85,7 @@ describe("given the lobby", () => {
       run(
         Effect.gen(function* () {
           const lobby = yield* Lobby;
-          const code = yield* lobby.create("pond", "chill");
+          const code = yield* lobby.create("pond", "chill", "coop");
           yield* TestClock.adjust("30 seconds");
           expect((yield* lobby.find(code)).code).toBe(code);
           yield* TestClock.adjust("30 seconds");
@@ -278,7 +232,11 @@ describe("given two players in the lobby", () => {
             Stream.runForEach((msg) => Queue.offer(inbox, msg)),
             Effect.forkScoped,
           );
-          expect((yield* latestRoster(inbox)).seats[0]).toEqual({ name: "Ann", look: nurse });
+          expect((yield* latestRoster(inbox)).seats[0]).toEqual({
+            name: "Ann",
+            look: nurse,
+            team: 0,
+          });
         }),
       ));
 
@@ -290,8 +248,8 @@ describe("given two players in the lobby", () => {
           yield* room.start(host.welcome.token);
           yield* room.setLook(host.welcome.token, nurse);
           const roster = yield* latestRoster(host.inbox);
-          expect(roster.seats[0]).toEqual({ name: "Ann", look: nurse });
-          expect(roster.crew).toEqual([{ name: "Ann", seat: 0, look: nurse }]);
+          expect(roster.seats[0]).toEqual({ name: "Ann", look: nurse, team: 0 });
+          expect(roster.crew).toEqual([{ name: "Ann", seat: 0, look: nurse, raft: 0 }]);
         }),
       ));
 

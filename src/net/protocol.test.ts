@@ -5,7 +5,15 @@ import { crewZones, MAX_CREW } from "../sim/constants.ts";
 import { parseLevel } from "../sim/level.ts";
 import { createSim, initPhysics, snapshot, step } from "../sim/sim.ts";
 import type { SeatInput, SimEvent, Snapshot } from "../sim/types.ts";
-import { ServerMsg, SimEvent as SimEventSchema, Snapshot as SnapshotSchema } from "./protocol.ts";
+import {
+  placeOf,
+  ServerMsg,
+  SimEvent as SimEventSchema,
+  Snapshot as SnapshotSchema,
+  startBlocker,
+  type Roster,
+} from "./protocol.ts";
+import { defaultLook } from "../look.ts";
 
 const overTheWire = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S["Type"]) =>
   Schema.decodeUnknownSync(schema)(JSON.parse(JSON.stringify(Schema.encodeSync(schema)(value))));
@@ -55,6 +63,53 @@ describe("given a snapshot with a bad field", () => {
   describe("when it is decoded", () => {
     it("should fail instead of passing it through", () => {
       expect(() => Schema.decodeUnknownSync(SnapshotSchema)({ tick: "1" })).toThrow();
+    });
+  });
+});
+
+const look = defaultLook(0);
+const member = (seat: number | null, raft: number) => ({ name: "x", seat, look, raft });
+const roomWith = (mode: Roster["mode"], teams: (0 | 1)[], crew: Roster["crew"] = []): Roster => ({
+  code: "ABCD",
+  course: "pond",
+  difficulty: "chill",
+  mode,
+  seats: teams.map((team, i) => ({ name: `P${i}`, look, team })),
+  host: 0,
+  started: crew.length > 0,
+  crew,
+});
+
+describe("given a roster", () => {
+  describe("when the mode is a team mode and a team has nobody on it", () => {
+    it("should name why the race cannot start", () => {
+      expect(startBlocker(roomWith("ghost", [0, 0]))).toBe("Both teams need a rider");
+      expect(startBlocker(roomWith("bump", [1]))).toBe("Both teams need a rider");
+      expect(startBlocker(roomWith("bump", []))).toBe("Both teams need a rider");
+    });
+  });
+
+  describe("when both teams have a rider, or the room is co-op", () => {
+    it("should not block the start", () => {
+      expect(startBlocker(roomWith("ghost", [0, 1]))).toBeNull();
+      expect(startBlocker(roomWith("coop", [0, 0, 0]))).toBeNull();
+    });
+  });
+
+  describe("when a race has Red riders then Blue riders", () => {
+    const crew = [member(4, 0), member(1, 0), member(0, 1), member(null, 1), member(2, 1)];
+    const roster = roomWith("ghost", [1, 0, 1, 0, 0], crew);
+
+    it("should place a seat by its raft and its rider index within that raft", () => {
+      expect(placeOf(roster, 4)).toEqual({ raft: 0, rider: 0 });
+      expect(placeOf(roster, 1)).toEqual({ raft: 0, rider: 1 });
+      expect(placeOf(roster, 0)).toEqual({ raft: 1, rider: 0 });
+      expect(placeOf(roster, 2)).toEqual({ raft: 1, rider: 2 });
+    });
+
+    it("should place a spectator nowhere", () => {
+      expect(placeOf(roster, 3)).toBeNull();
+      expect(placeOf(roomWith("ghost", [0, 1]), 0)).toBeNull();
     });
   });
 });

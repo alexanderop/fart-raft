@@ -33,6 +33,9 @@ export const isDifficulty = Schema.is(Difficulty);
 /** How the rafts in a race meet: "ghost" (pass through) or "bump" (collide). */
 export const Contact = Schema.Literals(["ghost", "bump"]);
 
+/** Which raft in `Snapshot.crews` an event happened to. */
+const RaftIndex = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 export const Crew = Schema.Struct({
   raft: Pose,
   riders: Schema.mutable(Schema.Array(RiderPose)),
@@ -52,9 +55,6 @@ export const Snapshot = Schema.Struct({
   ),
   crews: Schema.mutable(Schema.Array(Crew)),
 });
-
-/** Which raft in `Snapshot.crews` an event happened to. */
-const RaftIndex = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const SimEvent = Schema.Union([
   Schema.Struct({
@@ -122,8 +122,33 @@ export const Look = Schema.Struct({
   gadget: Schema.Literals(GADGETS),
 });
 
-/** A seated player as everyone sees them. */
-export const Player = Schema.Struct({ name: Schema.String, look: Look });
+/**
+ * How a room races: "coop" puts everyone on one raft, "ghost" and "bump" split the room into two
+ * teams with a raft each (rafts pass through each other, or collide).
+ */
+export const MODES = ["coop", "ghost", "bump"] as const;
+export const RoomMode = Schema.Literals(MODES);
+export type RoomMode = typeof RoomMode.Type;
+export const isRoomMode = Schema.is(RoomMode);
+
+/** The two teams of a team room; a team's number is also its raft's index in `Snapshot.crews`. */
+export const TEAMS = ["Red", "Blue"] as const;
+export const Team = Schema.Literals([0, 1]);
+export type Team = typeof Team.Type;
+/** Players on one team at most, so a room (`MAX_CREW`) always splits into two full teams. */
+export const MAX_TEAM = 4;
+
+export const isTeamMode = (mode: RoomMode): boolean => mode !== "coop";
+
+/** The sim's contact for a room mode: only "bump" makes rafts collide. */
+export const contactOf = (mode: RoomMode): typeof Contact.Type =>
+  mode === "bump" ? "bump" : "ghost";
+
+/**
+ * A seated player as everyone sees them. Every player has a team, even in a co-op room (which
+ * ignores it), so a host who switches the room to a team mode finds the room already split.
+ */
+export const Player = Schema.Struct({ name: Schema.String, look: Look, team: Team });
 export type Player = typeof Player.Type;
 
 /**
@@ -134,6 +159,8 @@ export const CrewMember = Schema.Struct({
   name: Schema.String,
   seat: Schema.NullOr(SeatIndex),
   look: Look,
+  /** The raft this rider is on: its team in a team race, always 0 in co-op. */
+  raft: RaftIndex,
 });
 
 /** Who is in the room. `seats[i]` is a player, or null for an open seat. */
@@ -141,21 +168,41 @@ export const Roster = Schema.Struct({
   code: RoomCode,
   course: CourseName,
   difficulty: Difficulty,
+  /** How the next race is raced: the host can change it any time, a race under way keeps its own. */
+  mode: RoomMode,
   seats: Schema.mutable(Schema.Array(Schema.NullOr(Player))),
   /** The human who can start the race: whoever has been in the room longest. */
   host: Schema.NullOr(SeatIndex),
   started: Schema.Boolean,
   /**
-   * `crew[r]` drives rider `r` (the sim's seat index) in the current race: the humans seated when
-   * it started, in seat order. Empty in the lobby. A seated player missing here is spectating.
+   * `crew[i]` drives the i-th rider in the sim's flat order for the current race: the humans
+   * seated when it started. Co-op: seat order on raft 0. Team race: Red's riders in seat order,
+   * then Blue's. Empty in the lobby. A seated player missing here is spectating.
    */
   crew: Schema.mutable(Schema.Array(CrewMember)),
 });
 export type Roster = typeof Roster.Type;
 
-/** The rider `seat` drives in the current race, or -1 while it is spectating (or in the lobby). */
-export const riderOf = (roster: Roster, seat: number): number =>
-  roster.crew.findIndex((c) => c.seat === seat);
+/**
+ * Where `seat` rides in the current race: its raft and its rider index within that raft (the
+ * `seat` of that rider's `fart` events). Null while it is spectating (or in the lobby).
+ */
+export const placeOf = (roster: Roster, seat: number): { raft: number; rider: number } | null => {
+  const i = roster.crew.findIndex((c) => c.seat === seat);
+  if (i < 0) return null;
+  const raft = roster.crew[i]!.raft;
+  return { raft, rider: roster.crew.slice(0, i).filter((c) => c.raft === raft).length };
+};
+
+/** How many players are on `team`. */
+export const teamSize = (roster: Pick<Roster, "seats">, team: Team): number =>
+  roster.seats.filter((p) => p?.team === team).length;
+
+/** Why the next race cannot start yet, or null when it can. The lobby shows it next to Start. */
+export const startBlocker = (roster: Pick<Roster, "mode" | "seats">): string | null =>
+  isTeamMode(roster.mode) && (teamSize(roster, 0) === 0 || teamSize(roster, 1) === 0)
+    ? "Both teams need a rider"
+    : null;
 
 export const ServerMsg = Schema.TaggedUnion({
   /** `token` proves the seat: SendInput, Start and Restart carry it. */
@@ -176,7 +223,7 @@ const Seated = { code: RoomCode, token: Schema.String };
 
 export const RaftRpcs = RpcGroup.make(
   Rpc.make("CreateRoom", {
-    payload: { course: CourseName, difficulty: Difficulty },
+    payload: { course: CourseName, difficulty: Difficulty, mode: RoomMode },
     success: RoomCode,
     error: ServerBusy,
   }),
@@ -194,6 +241,13 @@ export const RaftRpcs = RpcGroup.make(
   Rpc.make("Restart", { payload: Seated }),
   /** Any seated player: change their look, in the lobby or mid-race. */
   Rpc.make("SetLook", { payload: { ...Seated, look: Look } }),
+  /**
+   * Any seated player: ride the next race on `team`, in the lobby or mid-race. Ignored when that
+   * team already has `MAX_TEAM` players.
+   */
+  Rpc.make("SetTeam", { payload: { ...Seated, team: Team } }),
+  /** Host only: how the next race is raced, in the lobby or mid-race. */
+  Rpc.make("SetMode", { payload: { ...Seated, mode: RoomMode } }),
 );
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;

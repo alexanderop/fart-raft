@@ -11,7 +11,9 @@ import {
   ServerMsg,
   type CourseName,
   type Frame,
+  type RoomMode,
   type Roster,
+  type Team,
   type Welcome,
 } from "./protocol.ts";
 
@@ -31,7 +33,7 @@ export const clientLayer = (url: string) =>
   );
 
 export type Connection = {
-  /** The lobby seat. The rider it drives in a race is `riderOf(roster(), seat)`. */
+  /** The lobby seat. Where it rides in a race is `placeOf(roster(), seat)`. */
   readonly seat: number;
   readonly code: string;
   /** The room as of the latest Roster message. */
@@ -45,6 +47,10 @@ export type Connection = {
   restart(): void;
   /** Changes this player's look; everyone sees it on the next roster. */
   setLook(look: Look): void;
+  /** Moves this player to `team` for the next race; ignored when that team is full. */
+  setTeam(team: Team): void;
+  /** Host only: how the next race is raced. */
+  setMode(mode: RoomMode): void;
   /** Frames that arrived before the handler was set are delivered first. */
   onFrame(handler: (frame: Frame) => void): void;
   /** The seat is lost: the connection dropped or the server ended the stream. Not called after `close()`. */
@@ -71,6 +77,7 @@ export async function createRoom(
   url: string,
   course: CourseName,
   difficulty: Difficulty,
+  mode: RoomMode = "coop",
   timeoutMs = 5000,
 ) {
   const runtime = ManagedRuntime.make(clientLayer(url));
@@ -78,7 +85,7 @@ export async function createRoom(
     return await runtime.runPromise(
       Effect.gen(function* () {
         const client = yield* RaftClient;
-        return yield* client.CreateRoom({ course, difficulty });
+        return yield* client.CreateRoom({ course, difficulty, mode });
       }).pipe(
         Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => Effect.fail(unreachable(url)) }),
         Effect.mapError((error) =>
@@ -192,6 +199,14 @@ export async function connect(
     setLook(next) {
       if (closed) return;
       runtime.runFork(client.SetLook({ ...seat, look: next }).pipe(Effect.ignore));
+    },
+    setTeam(team) {
+      if (closed) return;
+      runtime.runFork(client.SetTeam({ ...seat, team }).pipe(Effect.ignore));
+    },
+    setMode(next) {
+      if (closed) return;
+      runtime.runFork(client.SetMode({ ...seat, mode: next }).pipe(Effect.ignore));
     },
     onFrame(handler) {
       frameHandler = handler;

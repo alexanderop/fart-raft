@@ -5,7 +5,13 @@ import { createServer } from "node:http";
 import { describe, expect, it } from "vite-plus/test";
 import pond from "../courses/pond.json";
 import { clientLayer, connect, createRoom, RaftClient } from "../src/net/client.ts";
-import { RoomFull, RoomNotFound, type Frame } from "../src/net/protocol.ts";
+import {
+  RoomFull,
+  RoomNotFound,
+  startBlocker,
+  type Frame,
+  type Roster,
+} from "../src/net/protocol.ts";
 import { defaultLook } from "../src/look.ts";
 import { MAX_CREW } from "../src/sim/constants.ts";
 import { parseLevel } from "../src/sim/level.ts";
@@ -14,7 +20,7 @@ import { appLayer } from "./app.ts";
 const level = parseLevel(pond);
 const look = defaultLook(0);
 /** A seated player in the look every test joins with. */
-const player = (name: string) => ({ name, look });
+const player = (name: string, team: 0 | 1 = 0) => ({ name, look, team });
 /** `n` open seats in a roster. */
 const open = (n: number): null[] => Array(n).fill(null);
 const serverLayer = appLayer({ canyon: level, graveyard: level, pond: level }).pipe(
@@ -42,7 +48,11 @@ describe("given the server listening on a free port", () => {
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const code = yield* client.CreateRoom({ course: "pond", difficulty: "chill" });
+          const code = yield* client.CreateRoom({
+            course: "pond",
+            difficulty: "chill",
+            mode: "coop",
+          });
           const messages = Array.from(
             yield* Stream.runCollect(client.Join({ code, name: "Ann", look }).pipe(Stream.take(2))),
           );
@@ -80,7 +90,11 @@ describe("given the server listening on a free port", () => {
       withServer((url) =>
         Effect.gen(function* () {
           const client = yield* clientFor(url);
-          const code = yield* client.CreateRoom({ course: "pond", difficulty: "chill" });
+          const code = yield* client.CreateRoom({
+            course: "pond",
+            difficulty: "chill",
+            mode: "coop",
+          });
           for (let i = 0; i < MAX_CREW; i++) {
             // One inbox per seat: wait for this join's own Welcome, not an earlier seat's roster.
             const joined = yield* Queue.unbounded<unknown>();
@@ -109,7 +123,7 @@ describe("given the server listening on a free port", () => {
           expect([host.seat, guest.seat]).toEqual([0, 1]);
           expect(guest.roster().seats).toEqual([
             player("Ann"),
-            player("Bo"),
+            player("Bo", 1),
             ...open(MAX_CREW - 2),
           ]);
           expect(guest.roster().host).toBe(0);
@@ -126,6 +140,38 @@ describe("given the server listening on a free port", () => {
             host.onFrame((f) => f.snapshot.tick === 3 && resolve(f)),
           );
           expect(afterRestart.snapshot.tick).toBe(3);
+          host.close();
+          guest.close();
+        }),
+      ));
+  });
+
+  describe("when two browser clients meet in a ghost team room", () => {
+    it("should carry the mode, the team pick and the host's mode change over the wire", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          const code = await createRoom(url, "pond", "chill", "ghost");
+          const host = await connect(url, code, "Ann", look);
+          const guest = await connect(url, code, "Bo", look);
+          expect(guest.roster().mode).toBe("ghost");
+          expect(guest.roster().seats.map((p) => p?.team ?? null)).toEqual([
+            0,
+            1,
+            ...open(MAX_CREW - 2),
+          ]);
+
+          const moved = new Promise<Roster>((resolve) =>
+            host.onRoster((r) => r.seats[1]?.team === 0 && resolve(r)),
+          );
+          guest.setTeam(0);
+          expect(startBlocker(await moved)).toBe("Both teams need a rider");
+
+          const switched = new Promise<Roster>((resolve) =>
+            guest.onRoster((r) => r.mode === "bump" && resolve(r)),
+          );
+          guest.setMode("coop");
+          host.setMode("bump");
+          expect((await switched).mode).toBe("bump");
           host.close();
           guest.close();
         }),

@@ -4,7 +4,7 @@ import { createSeatDriver } from "../input/seats.ts";
 import { mergeSources, readSeats } from "../input/sources.ts";
 import { touchSource } from "../input/touch.ts";
 import type { Connection } from "../net/client.ts";
-import { FRAME_TICKS, riderOf, type Roster } from "../net/protocol.ts";
+import { FRAME_TICKS, placeOf, type Roster } from "../net/protocol.ts";
 import { crewZones, STEP } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
 import type { LevelData, SimEvent, Snapshot, View } from "../sim/types.ts";
@@ -166,11 +166,11 @@ export async function onlineSession(
     roster.crew.map((c) => (c.seat === conn.seat ? "You" : c.name));
   let labels = labelsOf(conn.roster());
   let looks = looksOf(conn.roster());
-  let rider = riderOf(conn.roster(), conn.seat);
+  let rider = placeOf(conn.roster(), conn.seat)?.rider ?? -1;
   const stopRoster = conn.onRoster((roster) => {
     labels = labelsOf(roster);
     looks = looksOf(roster);
-    rider = riderOf(roster, conn.seat);
+    rider = placeOf(roster, conn.seat)?.rider ?? -1;
   });
 
   const received = await new Promise<Received>((resolve) => {
