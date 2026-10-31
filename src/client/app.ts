@@ -13,7 +13,7 @@ import { createAudio, type Audio } from "./fx/audio.ts";
 import { createVolumeStore } from "./fx/volume.ts";
 import { startLoop } from "./loop.ts";
 import { createRace } from "./race.ts";
-import { afterFailure, ONE_TRY, RETRY_FIRST_MS, retryFrom, type Retry } from "./reconnect.ts";
+import { bannerOf, CONNECTED, reconnectStep, type ReconnectSignal } from "./reconnect.ts";
 import { localSession, onlineSession, type Session } from "./session.ts";
 import { showBanner } from "./ui/banner.ts";
 import { inviteLink, showOnlineMenu, showRoom, showSpectating, showTeamPick } from "./ui/lobby.ts";
@@ -97,47 +97,51 @@ export function startApp(host: HTMLElement): void {
    * once; out of tries, a Reconnect button tries once more and Esc goes to the menu.
    */
   function holdSeat(conn: Connection, live: () => boolean): void {
+    let state = CONNECTED;
     let hide: (() => void) | undefined;
+    let shown = "";
     let timer = 0;
     own(() => {
       clearTimeout(timer);
       hide?.();
     });
-    const say = (
-      text: string,
-      tone: "info" | "error",
-      action?: Parameters<typeof showBanner>[3],
-    ) => {
+    const render = () => {
+      const banner = bannerOf(state);
+      const key = banner ? `${banner.tone}|${banner.text}|${banner.reconnect}` : "";
+      if (key === shown) return;
+      shown = key;
       hide?.();
-      hide = showBanner(host, text, tone, action);
+      hide = banner
+        ? showBanner(
+            host,
+            banner.text,
+            banner.tone,
+            banner.reconnect
+              ? { label: "Reconnect", run: () => send({ kind: "reconnect" }) }
+              : undefined,
+          )
+        : undefined;
     };
-    const attempt = async (retry: Retry) => {
-      const result = await conn.rejoin();
-      if (!live() || result.kind === "closed") return;
-      if (result.kind === "back") {
-        hide?.();
-        hide = undefined;
-        return;
+    const send = (signal: ReconnectSignal) => {
+      const next = reconnectStep(state, signal);
+      if (next === state) return;
+      state = next;
+      render();
+      if (next.kind === "waiting") {
+        clearTimeout(timer);
+        timer = window.setTimeout(() => send({ kind: "due" }), next.wait);
+      } else if (next.kind === "trying") {
+        void conn.rejoin().then((result) => {
+          if (!live() || result.kind === "closed") return;
+          send(
+            result.kind === "back"
+              ? { kind: "back" }
+              : { kind: "failed", failure: result.failure, now: Date.now() },
+          );
+        });
       }
-      const step = afterFailure(result.failure, retry, Date.now());
-      if (step.kind === "retry") {
-        timer = window.setTimeout(() => attempt(step.next), step.wait);
-        return;
-      }
-      const reconnect = {
-        label: "Reconnect",
-        run: () => {
-          say("Reconnecting…", "info");
-          void attempt(ONE_TRY);
-        },
-      };
-      say(step.text, "error", step.reconnect ? reconnect : undefined);
     };
-    conn.onClose(() => {
-      say("Connection lost · Reconnecting…", "info");
-      const retry = retryFrom(Date.now());
-      timer = window.setTimeout(() => attempt(retry), RETRY_FIRST_MS);
-    });
+    conn.onClose(() => send({ kind: "dropped", now: Date.now() }));
   }
 
   function launched(launch: Launch): AppState {

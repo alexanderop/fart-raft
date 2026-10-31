@@ -48,3 +48,66 @@ export function afterFailure(failure: JoinFailure, retry: Retry, now: number): N
     };
   return { kind: "stop", text: "Connection lost · Esc for menu", reconnect: true };
 }
+
+/**
+ * Where an online state is with its seat: `waiting` for the next attempt, `trying` one (`manual`
+ * from the Reconnect button), or `stopped` with the reason to show.
+ */
+export type Reconnect =
+  | { kind: "connected" }
+  | { kind: "waiting"; retry: Retry; wait: number }
+  | { kind: "trying"; retry: Retry; manual: boolean }
+  | { kind: "stopped"; text: string; reconnect: boolean };
+
+export type ReconnectSignal =
+  | { kind: "dropped"; now: number }
+  /** The wait ran out. */
+  | { kind: "due" }
+  | { kind: "back" }
+  | { kind: "failed"; failure: JoinFailure; now: number }
+  /** The Reconnect button. */
+  | { kind: "reconnect" };
+
+export const CONNECTED: Reconnect = { kind: "connected" };
+
+/** The next state; the same object when the signal does not apply. */
+export function reconnectStep(state: Reconnect, signal: ReconnectSignal): Reconnect {
+  switch (signal.kind) {
+    case "dropped":
+      return { kind: "waiting", retry: retryFrom(signal.now), wait: RETRY_FIRST_MS };
+    case "due":
+      return state.kind === "waiting"
+        ? { kind: "trying", retry: state.retry, manual: false }
+        : state;
+    case "back":
+      return state.kind === "trying" ? CONNECTED : state;
+    case "reconnect":
+      return state.kind === "stopped" && state.reconnect
+        ? { kind: "trying", retry: ONE_TRY, manual: true }
+        : state;
+  }
+  if (state.kind !== "trying") return state;
+  const step = afterFailure(signal.failure, state.retry, signal.now);
+  return step.kind === "retry"
+    ? { kind: "waiting", retry: step.next, wait: step.wait }
+    : { kind: "stopped", text: step.text, reconnect: step.reconnect };
+}
+
+/** What the banner says in `state`, or null for no banner. */
+export function bannerOf(
+  state: Reconnect,
+): { text: string; tone: "info" | "error"; reconnect: boolean } | null {
+  switch (state.kind) {
+    case "connected":
+      return null;
+    case "waiting":
+      return { text: "Connection lost · Reconnecting…", tone: "info", reconnect: false };
+    case "trying":
+      return {
+        text: state.manual ? "Reconnecting…" : "Connection lost · Reconnecting…",
+        tone: "info",
+        reconnect: false,
+      };
+  }
+  return { text: state.text, tone: "error", reconnect: state.reconnect };
+}
