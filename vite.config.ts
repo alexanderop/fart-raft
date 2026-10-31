@@ -7,6 +7,8 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {},
+  // Agent worktrees live under .claude/: their copies of the tests are not this checkout's.
+  test: { exclude: ["**/node_modules/**", "**/.git/**", ".claude/**"] },
   lint: {
     plugins: ["eslint", "typescript", "unicorn", "oxc", "import"],
     categories: {

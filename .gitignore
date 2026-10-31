@@ -26,3 +26,6 @@ dist-ssr
 
 # Blender autosave backups
 *.blend1
+
+# Agent worktrees
+.claude/worktrees/
