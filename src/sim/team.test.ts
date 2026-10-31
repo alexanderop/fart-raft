@@ -240,6 +240,91 @@ describe("given a bump race", () => {
   });
 });
 
+describe("given a bump race where one raft has finished", () => {
+  const FINISH = 20;
+  let sim: Sim;
+  let behind: SimEvent[];
+  let parked: { x: number; y: number };
+  beforeAll(() => {
+    sim = createSim(water([], FINISH), TWO_CREWS, { difficulty: "wild", contact: "bump" });
+    // Raft 0 sails across the line and parks; raft 1 idles in the far corner until it is done.
+    sim.racers[1]!.raft.body.setTranslation({ x: -40, y: -TEAM_SPACING / 2 }, true);
+    for (let t = 0; t < COUNTDOWN_TICKS + 900; t++) {
+      step(sim, [...pushForward, ...idle]);
+      if (sim.racers[0]!.phase.kind === "finished" && sim.racers[0]!.raft.body.linvel().x < 0.05)
+        break;
+    }
+    parked = { ...at(sim, 0) };
+  });
+
+  describe("when the loser is driven through the finished raft's spot", () => {
+    beforeAll(() => {
+      sim.racers[1]!.raft.body.setTranslation({ x: parked.x - 9, y: parked.y }, true);
+      sim.racers[1]!.raft.body.setLinvel({ x: 0, y: 0 }, true);
+      behind = [];
+      for (let t = 0; t < 240; t++) behind.push(...step(sim, [...idle, ...pushForward]));
+    });
+
+    it("should let the loser pass through without a bump", () => {
+      expect(rivalBumps(behind)).toEqual([]);
+      expect(at(sim, 1).x).toBeGreaterThan(parked.x - 2 * RAFT_HULL + 1);
+    });
+
+    it("should not wipe the loser out or end its race", () => {
+      expect(behind.some((e) => e.type === "hit")).toBe(false);
+    });
+  });
+
+  describe("when the loser farts at the finished raft from close by", () => {
+    it("should not shove the finished raft", () => {
+      const winner = sim.racers[0]!.raft.body;
+      const loser = sim.racers[1]!;
+      winner.setTranslation({ x: 10, y: 0 }, true);
+      winner.setLinvel({ x: 0, y: 0 }, true);
+      loser.phase = { kind: "racing", startTick: 0, nextCheckpoint: 0 };
+      loser.raft.body.setTranslation({ x: 10, y: -TEAM_SPACING }, true);
+      loser.raft.body.setLinvel({ x: 0, y: 0 }, true);
+      for (let t = 0; t < 10; t++) step(sim, [...idle, ...pushRight]);
+      expect(Math.hypot(winner.linvel().x, winner.linvel().y)).toBeLessThan(0.01);
+    });
+  });
+});
+
+describe("given the same shove from either lane", () => {
+  describe("when raft 0 shoves raft 1, and raft 1 shoves raft 0 the other way", () => {
+    it("should move the shoved raft as far in both cases, mirrored", () => {
+      const ticks = COUNTDOWN_TICKS + 30;
+      const red = race("bump", ticks, () => [pushLeft, idle]).sim;
+      const blue = race("bump", ticks, () => [idle, pushRight]).sim;
+      expect(-TEAM_SPACING / 2 - at(red, 1).y).toBeCloseTo(at(blue, 0).y - TEAM_SPACING / 2, 6);
+      expect(at(red, 1).x).toBeCloseTo(at(blue, 0).x, 6);
+    });
+  });
+});
+
+describe("given both crews wiped out and about to respawn on the same tick", () => {
+  describe("when each sits where the other's respawn spot is", () => {
+    it("should move both spots upstream by the same amount", () => {
+      const sim = createSim(water(), TWO_CREWS, { difficulty: "wild", contact: "bump" });
+      for (let t = 0; t < COUNTDOWN_TICKS + 1; t++) step(sim, [...idle, ...idle]);
+      sim.racers.forEach((racer, i) => {
+        racer.health.respawnIn = 3;
+        racer.raft.body.setTranslation(
+          { x: 0, y: i === 0 ? -TEAM_SPACING / 2 : TEAM_SPACING / 2 },
+          true,
+        );
+      });
+      const respawns: Extract<SimEvent, { type: "respawn" }>[] = [];
+      for (let t = 0; t < 3; t++)
+        for (const e of step(sim, [...idle, ...idle])) if (e.type === "respawn") respawns.push(e);
+      const [red, blue] = respawns;
+      expect(respawns.map((e) => e.raft)).toEqual([0, 1]);
+      expect(red!.x).toBeCloseTo(blue!.x, 6);
+      expect(red!.y).toBeCloseTo(-blue!.y, 6);
+    });
+  });
+});
+
 describe("given two rafts racing to a close finish line", () => {
   describe("when both crews drive the same way", () => {
     it("should finish both on the same tick: a draw", () => {

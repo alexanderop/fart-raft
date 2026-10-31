@@ -159,26 +159,38 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
   for (const racer of sim.racers) racer.phase = tickPhase(racer.phase, sim.tick);
   if (counting && sim.racers[0]!.phase.kind === "racing") events.push({ type: "go" });
 
+  // Every raft acts on the same start-of-tick state, so the outcome never depends on raft order:
+  // inputs first (rival blasts are only collected), then every respawn spot, then drag and boost,
+  // and the blasts land last.
+  const blasts: Blast[] = [];
   let seat = 0;
   sim.racers.forEach((racer, i) => {
     const { raft, health } = racer;
     const own = inputs.slice(seat, seat + raft.zones.length);
     seat += raft.zones.length;
-    const racing = racer.phase.kind === "racing";
     // A wiped-out crew tumbles helplessly until it respawns: no walking, no farting.
     if (health.respawnIn === 0) {
       const from = events.length;
-      applyInputs(raft, i, own, racing, events);
-      blastRivals(sim, i, events.slice(from));
+      applyInputs(raft, i, own, racer.phase.kind === "racing", events);
+      collectBlasts(sim, i, events.slice(from), blasts);
     }
-    if (tickHealth(health, sim.tuning)) {
-      const at = respawnSpot(sim, i);
-      placeRaft(raft, at);
-      events.push({ type: "respawn", raft: i, x: at.x, y: at.y });
-    }
-    applyWaterDrag(raft, racing ? flowAt(sim, raft.body.translation()) : STILL);
-    if (racing && health.respawnIn === 0) boost(sim, i, events);
   });
+  const spots = sim.racers.map((racer, i) =>
+    tickHealth(racer.health, sim.tuning) ? respawnSpot(sim, i) : null,
+  );
+  spots.forEach((at, i) => {
+    if (!at) return;
+    placeRaft(sim.racers[i]!.raft, at);
+    events.push({ type: "respawn", raft: i, x: at.x, y: at.y });
+  });
+  sim.racers.forEach((racer, i) => {
+    const racing = racer.phase.kind === "racing";
+    applyWaterDrag(racer.raft, racing ? flowAt(sim, racer.raft.body.translation()) : STILL);
+    if (racing && racer.health.respawnIn === 0) boost(sim, i, events);
+  });
+  // A raft that has just reappeared is dead still: a blast aimed at where it was does not move it.
+  for (const { to, impulse } of blasts)
+    if (!spots[to]) sim.racers[to]!.raft.body.applyImpulse(impulse, true);
   sim.hazards.forEach((hazard, i) => hazard.update(sim.hazardSteps[i]!));
   if (sim.contact === "bump") sim.racers.forEach((_, i) => updateSolid(sim, i));
 
@@ -258,23 +270,31 @@ function clearOfRivals(sim: Sim, i: number, p: Vec2 = sim.racers[i]!.raft.body.t
 
 /**
  * Bump race: a raft in its respawn grace passes through rivals, and turns solid again only once
- * it is clear of them, so the grace never ends with two hulls inside each other.
+ * it is clear of them, so the grace never ends with two hulls inside each other. A raft that has
+ * finished is done racing: it parks on the line as a ghost, so the rafts still racing pass through
+ * it and its farts shove nobody.
  */
 function updateSolid(sim: Sim, i: number): void {
   const racer = sim.racers[i]!;
-  const solid = racer.health.invulnerable === 0 && (racer.solid || clearOfRivals(sim, i));
+  const solid =
+    racer.phase.kind !== "finished" &&
+    racer.health.invulnerable === 0 &&
+    (racer.solid || clearOfRivals(sim, i));
   if (solid !== racer.solid) setSolid(racer, solid);
 }
+
+/** A rival blast on its way: raft `to` takes `impulse` once every raft's drag is done. */
+type Blast = { to: number; impulse: Vec2 };
 
 /**
  * Bump race: each tick of a fart burst also shoves solid rivals within RIVAL_REACH of the rider
  * away from it, at RIVAL_BLAST of the push on its own raft, fading with distance. A rider on the
  * far side of its raft is always out of reach, so only gas that blows at the rival counts.
  */
-function blastRivals(sim: Sim, i: number, farts: readonly SimEvent[]): void {
+function collectBlasts(sim: Sim, i: number, farts: readonly SimEvent[], out: Blast[]): void {
   const racer = sim.racers[i]!;
   if (!racer.solid) return;
-  const impulse = RIVAL_BLAST * FART_FORCE * STEP * crewPower(racer.raft.zones.length);
+  const power = RIVAL_BLAST * FART_FORCE * STEP * crewPower(racer.raft.zones.length);
   for (const fart of farts) {
     if (fart.type !== "fart") continue;
     sim.racers.forEach((rival, j) => {
@@ -285,15 +305,16 @@ function blastRivals(sim: Sim, i: number, farts: readonly SimEvent[]): void {
       const d = Math.hypot(dx, dy);
       const gap = Math.max(0, d - RAFT_HULL);
       if (gap >= RIVAL_REACH) return;
-      const k = (impulse * (1 - gap / RIVAL_REACH)) / d;
-      rival.raft.body.applyImpulse({ x: dx * k, y: dy * k }, true);
+      const k = (power * (1 - gap / RIVAL_REACH)) / d;
+      out.push({ to: j, impulse: { x: dx * k, y: dy * k } });
     });
   }
 }
 
 /**
  * Raft `i`'s lane at the gate it respawns at. In Bump, a spot on top of a rival moves upstream
- * until it is clear, so a respawn never lands on the rival.
+ * until it is clear, so a respawn never lands on the rival. Rivals count where they are now, not
+ * where a raft respawning on the same tick is about to be, so neither raft is favoured.
  */
 function respawnSpot(sim: Sim, i: number): Pose {
   const { phase } = sim.racers[i]!;
