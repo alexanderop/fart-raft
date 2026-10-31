@@ -23,7 +23,8 @@ export const DEFAULT_VOLUME: Volume = {
   master: DEFAULT_MASTER,
   farts: 1,
   effects: 1,
-  muted: false,
+  // Sound starts off: the speaker button or M turns it on, and that choice is saved.
+  muted: true,
   restore: DEFAULT_MASTER,
 };
 
@@ -36,7 +37,7 @@ export function clampLevel(value: unknown, fallback: number): number {
 
 /** Stored JSON (or a bare number, as master) plus the old mute flag, back to settings. */
 export function parseVolume(raw: string | null, mutedRaw: string | null): Volume {
-  const v = { ...DEFAULT_VOLUME, muted: mutedRaw === "1" };
+  const v = { ...DEFAULT_VOLUME, muted: mutedRaw !== "0" };
   if (raw === null) return v;
   let saved: unknown;
   try {

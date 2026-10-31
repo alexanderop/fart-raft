@@ -14,13 +14,15 @@ import {
 
 describe("given a stored volume", () => {
   describe("when nothing was stored yet", () => {
-    it("should start at the default level, unmuted", () => {
+    it("should start at the default level, muted", () => {
       expect(parseVolume(null, null)).toEqual(DEFAULT_VOLUME);
       expect(DEFAULT_VOLUME.master).toBe(DEFAULT_MASTER);
+      expect(DEFAULT_VOLUME.muted).toBe(true);
     });
 
-    it("should keep the old mute flag", () => {
+    it("should keep a saved mute flag either way", () => {
       expect(parseVolume(null, "1").muted).toBe(true);
+      expect(parseVolume(null, "0").muted).toBe(false);
     });
   });
 
@@ -39,7 +41,14 @@ describe("given a stored volume", () => {
 
   describe("when it is written and read back", () => {
     it("should round-trip", () => {
-      const v = { ...DEFAULT_VOLUME, master: 0.35, farts: 0.6, effects: 0.1, restore: 0.35 };
+      const v = {
+        ...DEFAULT_VOLUME,
+        muted: false,
+        master: 0.35,
+        farts: 0.6,
+        effects: 0.1,
+        restore: 0.35,
+      };
       expect(parseVolume(serializeVolume(v), "0")).toEqual(v);
     });
   });
@@ -85,7 +94,7 @@ describe("given volume and mute", () => {
     });
 
     it("should stay muted when only farts or effects move", () => {
-      const muted = toggleMute(DEFAULT_VOLUME);
+      const muted = toggleMute({ ...DEFAULT_VOLUME, muted: false });
       expect(setLevel(muted, "farts", 0.2)).toMatchObject({ muted: true, farts: 0.2 });
     });
   });
