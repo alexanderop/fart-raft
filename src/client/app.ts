@@ -15,7 +15,7 @@ import { startLoop } from "./loop.ts";
 import { createRace } from "./race.ts";
 import { localSession, onlineSession, type Session } from "./session.ts";
 import { showBanner } from "./ui/banner.ts";
-import { inviteLink, showOnlineMenu, showRoom, showSpectating } from "./ui/lobby.ts";
+import { inviteLink, showOnlineMenu, showRoom, showSpectating, showTeamPick } from "./ui/lobby.ts";
 import {
   configToSearch,
   defaultServerUrl,
@@ -169,7 +169,10 @@ export function startApp(host: HTMLElement): void {
       onMenu: toMenu,
     });
     own(() => touch.dispose());
-    if (state.conn) own(showSpectating(host, state.conn));
+    if (state.conn) {
+      own(showSpectating(host, state.conn));
+      own(showTeamPick(host, state.conn));
+    }
 
     const ready = await state.session;
     if (!live()) return ready.dispose();

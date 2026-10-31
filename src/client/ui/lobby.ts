@@ -25,6 +25,7 @@ import {
   type CourseName,
   type Player,
   type Roster,
+  type Team,
 } from "../../net/protocol.ts";
 
 const NAME_KEY = "fart-raft:name";
@@ -407,5 +408,78 @@ export function showSpectating(host: HTMLElement, conn: Connection): () => void 
   return () => {
     stop();
     hide?.();
+  };
+}
+
+const teamButton = (roster: Roster, team: Team, mine: Team, label: string) => {
+  const size = teamSize(roster, team);
+  const state = mine === team ? "✓ " : "";
+  const disabled = mine === team || size >= MAX_TEAM ? "disabled" : "";
+  return `<button type="button" class="team-pick-btn" style="--team:${teamColor(team)}" data-team="${team}" ${disabled}>${state}${label}</button>`;
+};
+
+/**
+ * During a team race: pick the team you ride in the next race, from any seat. A spectator (joined
+ * mid-race) sees both teams; a rider gets one small button for the other team. A full team is
+ * disabled (`MAX_TEAM`). The host also gets Ghost / Bump buttons, since a started room has no
+ * lobby screen to switch the mode in. A spectator's camera follows its team's raft, so picking one also moves
+ * the view there at once. The returned function removes the strip.
+ */
+export function showTeamPick(host: HTMLElement, conn: Connection): () => void {
+  const el = document.createElement("div");
+  el.className = "team-pick";
+  el.hidden = true;
+  host.append(el);
+  // Space and Enter belong to the fart, not to a focused button.
+  el.addEventListener("keydown", (e) => {
+    if (e.code !== "Escape") e.stopPropagation();
+  });
+  el.addEventListener("click", (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    const pick = target?.closest<HTMLButtonElement>("[data-team]");
+    const mode = target?.closest<HTMLButtonElement>("[data-mode]");
+    if (pick) conn.setTeam(pick.dataset.team === "1" ? 1 : 0);
+    else if (mode) conn.setMode(mode.dataset.mode === "bump" ? "bump" : "ghost");
+    else return;
+    (pick ?? mode)?.blur();
+  });
+  /** The host also picks how the next race is raced, since a started room has no lobby screen. */
+  const modeButtons = (roster: Roster) =>
+    roster.host !== conn.seat
+      ? ""
+      : (["ghost", "bump"] as const)
+          .map(
+            (m) =>
+              `<button type="button" class="team-pick-btn team-pick-mode" data-mode="${m}" ${roster.mode === m ? "disabled" : ""}>${roster.mode === m ? "✓ " : ""}${m === "bump" ? "💥 Bump" : "👻 Ghost"}</button>`,
+          )
+          .join("");
+  const render = (roster: Roster) => {
+    const mine = roster.seats[conn.seat]?.team;
+    el.hidden = !(roster.started && isTeamMode(roster.mode) && mine !== undefined);
+    if (el.hidden || mine === undefined) return;
+    const other = mine === 0 ? 1 : 0;
+    if (placeOf(roster, conn.seat) === null) {
+      el.innerHTML = `<span class="team-pick-label">Ride next race for</span>${TEAMS.map(
+        (name, t) => {
+          const team = t === 0 ? 0 : 1;
+          return teamButton(roster, team, mine, `${name} ${teamSize(roster, team)}/${MAX_TEAM}`);
+        },
+      ).join("")}`;
+    } else {
+      const full = teamSize(roster, other) >= MAX_TEAM;
+      el.innerHTML = teamButton(
+        roster,
+        other,
+        mine,
+        full ? `${teamName(other)} is full` : `Next race: ${teamName(other)} ⇄`,
+      );
+    }
+    el.insertAdjacentHTML("beforeend", modeButtons(roster));
+  };
+  render(conn.roster());
+  const stop = conn.onRoster(render);
+  return () => {
+    stop();
+    el.remove();
   };
 }

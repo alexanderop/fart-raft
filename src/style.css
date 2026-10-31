@@ -1754,3 +1754,72 @@ button {
   display: grid;
   gap: 8px;
 }
+
+/* ── Team pick during a race: late joiners and riders choose the next race's team ── */
+
+.team-pick {
+  position: fixed;
+  z-index: 7;
+  left: 50%;
+  bottom: calc(12px + var(--safe-b));
+  translate: -50% 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 6px 10px;
+  border-radius: 18px;
+  background: var(--hud-bg);
+  border: 3px solid var(--outline);
+  color: #fff;
+  font-weight: 900;
+  font-size: 14px;
+}
+
+.team-pick[hidden] {
+  display: none;
+}
+
+.team-pick-btn {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 900;
+  border: 3px solid var(--outline);
+  border-radius: 12px;
+  background: var(--team);
+  color: #fff;
+  -webkit-text-stroke: 3px var(--outline);
+  paint-order: stroke fill;
+  box-shadow: 0 3px 0 var(--outline);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.team-pick-btn:disabled {
+  box-shadow: none;
+  cursor: default;
+  opacity: 0.55;
+}
+
+.team-pick-mode {
+  background: #eef7fd;
+  color: var(--outline);
+  -webkit-text-stroke: 0;
+}
+
+@media (max-width: 480px) {
+  .team-pick {
+    gap: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .team-pick-btn {
+    padding: 5px 8px;
+    font-size: 13px;
+  }
+}
