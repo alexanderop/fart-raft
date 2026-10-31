@@ -6,6 +6,7 @@ import { parseLevel } from "../sim/level.ts";
 import { createSim, initPhysics, snapshot, step } from "../sim/sim.ts";
 import type { SeatInput, SimEvent, Snapshot } from "../sim/types.ts";
 import {
+  followedRaft,
   placeOf,
   ServerMsg,
   SimEvent as SimEventSchema,
@@ -110,6 +111,23 @@ describe("given a roster", () => {
     it("should place a spectator nowhere", () => {
       expect(placeOf(roster, 3)).toBeNull();
       expect(placeOf(roomWith("ghost", [0, 1]), 0)).toBeNull();
+    });
+  });
+
+  describe("when the camera picks a raft in a frame of the race", () => {
+    const crew = [member(4, 0), member(1, 0), member(0, 1), member(null, 1), member(2, 1)];
+    const roster = roomWith("ghost", [1, 0, 1, 0, 0], crew);
+
+    it("should follow the raft a rider rides, and a spectator's team raft", () => {
+      expect(followedRaft(roster, 4, 2)).toBe(0);
+      expect(followedRaft(roster, 0, 2)).toBe(1);
+      expect(followedRaft(roster, 3, 2)).toBe(0);
+    });
+
+    it("should stay inside a stale frame that has fewer rafts than the roster", () => {
+      expect(followedRaft(roster, 0, 1)).toBe(0);
+      expect(followedRaft(roster, 2, 1)).toBe(0);
+      expect(followedRaft(roomWith("ghost", [1, 1]), 1, 1)).toBe(0);
     });
   });
 });

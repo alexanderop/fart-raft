@@ -194,6 +194,14 @@ export const placeOf = (roster: Roster, seat: number): { raft: number; rider: nu
   return { raft, rider: roster.crew.slice(0, i).filter((c) => c.raft === raft).length };
 };
 
+/**
+ * The raft `seat`'s camera follows in a frame of `rafts` crews: the one it rides, else (spectating)
+ * its team's raft, else raft 0. The roster and the frames arrive separately, so a frame from before
+ * a restart can have fewer rafts than the roster says: the choice is clamped to the frame.
+ */
+export const followedRaft = (roster: Roster, seat: number, rafts: number): number =>
+  Math.max(0, Math.min(placeOf(roster, seat)?.raft ?? roster.seats[seat]?.team ?? 0, rafts - 1));
+
 /** How many players are on `team`. */
 export const teamSize = (roster: Pick<Roster, "seats">, team: Team): number =>
   roster.seats.filter((p) => p?.team === team).length;

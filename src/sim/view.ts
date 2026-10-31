@@ -6,6 +6,10 @@ export function viewOf(snapshot: Snapshot, raft: number): View {
   return { ...race, ...crews[raft]!, rivals: crews.filter((_, i) => i !== raft) };
 }
 
+/** Every raft's view of the race, by raft index. Make them once per tick and share them. */
+export const viewsOf = (snapshot: Snapshot): View[] =>
+  snapshot.crews.map((_, raft) => viewOf(snapshot, raft));
+
 /**
  * The race's winner: the first raft across the finish, "draw" when the first ones finished on the
  * same tick, null while nobody has finished. Every raft starts on the same tick, so equal finish

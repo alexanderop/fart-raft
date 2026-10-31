@@ -8,6 +8,7 @@ import { botSource } from "../input/bot.ts";
 import {
   contactOf,
   FRAME_TICKS,
+  followedRaft,
   isTeamMode,
   placeOf,
   startBlocker,
@@ -16,7 +17,7 @@ import {
 import { crewZones, MAX_LOCAL, STEP } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
 import type { Crew, LevelData, SimEvent, View } from "../sim/types.ts";
-import { viewOf } from "../sim/view.ts";
+import { viewOf, viewsOf } from "../sim/view.ts";
 import { crewSize, type GameConfig, type LocalPlayer } from "./ui/menu.ts";
 import { botCrewLook } from "./teams.ts";
 import { defaultLook, type Look } from "../look.ts";
@@ -113,8 +114,9 @@ export async function localSession(
   const options = { difficulty: config.difficulty, contact: contactOf(config.race) };
 
   let sim = createSim(level, rafts, options);
-  let snap = snapshot(sim);
-  let prev = viewOf(snap, 0);
+  // One View per raft per tick: a crew's bots share a crossing plan through the View they read.
+  let views = viewsOf(snapshot(sim));
+  let prev = views[0]!;
   let curr = prev;
   let pending: SimEvent[] = [];
   let pendingRivals: SimEvent[] = [];
@@ -132,9 +134,7 @@ export async function localSession(
   const rivalBots = () =>
     rafts
       .slice(1)
-      .flatMap((zones, r) =>
-        zones.map((_, i) => botSource(i, zones, level, () => viewOf(snap, r + 1))),
-      );
+      .flatMap((zones, r) => zones.map((_, i) => botSource(i, zones, level, () => views[r + 1]!)));
   let rivals = rivalBots();
   driver.update();
   let startWasDown = false;
@@ -142,8 +142,8 @@ export async function localSession(
   function restart() {
     sim.world.free();
     sim = createSim(level, rafts, options);
-    snap = snapshot(sim);
-    prev = curr = viewOf(snap, 0);
+    views = viewsOf(snapshot(sim));
+    prev = curr = views[0]!;
     driver.reset();
     rivals = rivalBots();
     return null;
@@ -164,8 +164,8 @@ export async function localSession(
       prev = curr;
       const inputs = [...readSeats(driver.sources()), ...readSeats(rivals)];
       sortEvents(step(sim, inputs), 0, pending, pendingRivals);
-      snap = snapshot(sim);
-      curr = viewOf(snap, 0);
+      views = viewsOf(snapshot(sim));
+      curr = views[0]!;
     },
     restart,
     frame(alpha) {
@@ -188,13 +188,6 @@ const looksOf = (roster: Roster): Look[][] => {
   for (const c of roster.crew) (out[c.raft] ??= []).push(c.look);
   return Array.from(out, (looks) => looks ?? []);
 };
-
-/**
- * The raft this seat's camera follows: the one it rides, else (spectating) its team's raft in a
- * team race, else raft 0.
- */
-const followed = (roster: Roster, seat: number, rafts: number): number =>
-  placeOf(roster, seat)?.raft ?? Math.min(roster.seats[seat]?.team ?? 0, rafts - 1);
 
 /** Wire frames come every FRAME_TICKS sim ticks, so a snapshot is blended in over that long. */
 const FRAME_MS = FRAME_TICKS * STEP * 1000;
@@ -239,7 +232,7 @@ export async function onlineSession(
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
     conn.onFrame((frame) => {
-      const raft = followed(roster, conn.seat, frame.snapshot.crews.length);
+      const raft = followedRaft(roster, conn.seat, frame.snapshot.crews.length);
       const view = viewOf(frame.snapshot, raft);
       if (state) {
         // A restart with a different crew or raft is a new raft: cut instead of blending riders across.
