@@ -254,7 +254,7 @@ describe("given two players in the lobby", () => {
           yield* room.start(host.welcome.token);
           yield* play(1);
           const { frames, roster } = yield* drain(host.inbox);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(2);
           expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", 1)]);
         }),
       ));
@@ -323,7 +323,7 @@ describe("given eight players in the lobby", () => {
           yield* room.start(host.welcome.token);
           yield* play(1);
           const { frames, roster } = yield* drain(host.inbox);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(MAX_CREW);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(MAX_CREW);
           expect(roster?.crew).toEqual(names.map((name, seat) => rider(name, seat)));
         }),
       ));
@@ -340,8 +340,8 @@ describe("given one player racing alone", () => {
           yield* room.start(welcome.token);
           yield* play(6);
           const frames = yield* framesIn(inbox);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(1);
-          expect(frames.at(-1)!.snapshot.phase.kind).toBe("racing");
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(1);
+          expect(frames.at(-1)!.snapshot.crews[0]!.phase.kind).toBe("racing");
           expect(fartsIn(frames)).toHaveLength(0);
         }),
       ));
@@ -361,7 +361,7 @@ describe("given a race in progress", () => {
 
           const frames = yield* framesIn(inbox);
           expect(frames.length).toBeGreaterThan(60);
-          expect(frames.at(-1)!.snapshot.phase.kind).toBe("racing");
+          expect(frames.at(-1)!.snapshot.crews[0]!.phase.kind).toBe("racing");
           const farts = frames
             .flatMap((f) => f.events)
             .filter((e) => e.type === "fart" && e.seat === 0);
@@ -417,7 +417,7 @@ describe("given a race in progress", () => {
           yield* play(4);
           const { frames, roster } = yield* drain(late.inbox);
           expect(frames.length).toBeGreaterThan(10);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(1);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(1);
           expect(fartsIn(frames)).toHaveLength(0);
           expect(roster?.crew).toEqual([rider("Ann", 0)]);
         }),
@@ -435,7 +435,7 @@ describe("given a race in progress", () => {
           yield* room.sendInput(late.welcome.token, FART);
           yield* play(4);
           const { frames, roster } = yield* drain(late.inbox);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(2);
           expect(roster?.crew).toEqual([rider("Ann", 0), rider("Late", 1)]);
           const farts = fartsIn(frames);
           expect(farts.length).toBeGreaterThan(0);
@@ -458,13 +458,13 @@ describe("given a race in progress", () => {
           yield* play(4);
 
           const { frames, roster } = yield* drain(host.inbox);
-          expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
+          expect(frames.at(-1)!.snapshot.crews[0]!.riders).toHaveLength(2);
           expect(fartsIn(frames)).toHaveLength(0);
           expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", null, 1)]);
 
           yield* room.restart(host.welcome.token);
           yield* play(1);
-          expect((yield* framesIn(host.inbox)).at(-1)!.snapshot.riders).toHaveLength(1);
+          expect((yield* framesIn(host.inbox)).at(-1)!.snapshot.crews[0]!.riders).toHaveLength(1);
         }),
       ));
   });

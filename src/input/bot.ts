@@ -8,7 +8,7 @@ import {
   type Box,
   type LevelData,
   type SeatInput,
-  type Snapshot,
+  type View,
   type Vec2,
 } from "../sim/types.ts";
 import {
@@ -22,8 +22,8 @@ import {
 import { awayFromBox, clamp, distToBox } from "./geometry.ts";
 import type { InputSource } from "./sources.ts";
 
-// A bot is just another InputSource: it reads the same Snapshot every client (and later the
-// server) has, and answers with a SeatInput. No DOM, no Rapier, so it runs headless on a server.
+// A bot is just another InputSource: it reads its raft's View of the Snapshot every client (and
+// the server) has, and answers with a SeatInput. No DOM, no Rapier, so it runs headless on a server.
 
 export type BotTuning = {
   cruise: number; // target speed, m/s
@@ -47,7 +47,7 @@ const ARRIVED = 0.05;
 type Vec = Vec2;
 
 /** The latest crossing plan per level: the bots of one crew share it, see below. */
-const sharedPlans = new WeakMap<LevelData, { snap: Snapshot; crossing: Crossing | null }>();
+const sharedPlans = new WeakMap<LevelData, { snap: View; crossing: Crossing | null }>();
 
 /**
  * A crew that gains less than STALL_PROGRESS m in STALL_TICKS has waited too long: for the next
@@ -82,7 +82,7 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
  * Where each hazard is right now, as a box. The crossing planner steers the one it is working
  * on (`except`), so that one is left out: avoiding it as well would fight the dash.
  */
-function hazardBoxes(level: LevelData, snap: Snapshot, except: readonly string[] = []): Box[] {
+function hazardBoxes(level: LevelData, snap: View, except: readonly string[] = []): Box[] {
   return level.hazards
     .filter((h) => !except.includes(h.id))
     .flatMap((h) => boxesOf(h, hazardTime(snap.difficulty, snap.tick, h.kind)));
@@ -101,7 +101,7 @@ function clearLane(frame: Frame, s: number, lat: number, until: number): boolean
 function desiredForce(
   walls: readonly Box[],
   hazards: readonly Box[],
-  snap: Snapshot,
+  snap: View,
   vel: Vec,
   target: Vec,
   t: BotTuning,
@@ -161,7 +161,7 @@ const STUCK_AFTER = 1; // …for this many seconds
 const ESCAPE_FOR = 1.5; // then back off the nearest obstacle for this long
 
 /** Back off the closest wall while sliding along it toward the gate. */
-function escapeForce(walls: readonly Box[], snap: Snapshot, target: Vec, t: BotTuning): Vec {
+function escapeForce(walls: readonly Box[], snap: View, target: Vec, t: BotTuning): Vec {
   const { raft } = snap;
   const tx = target.x - raft.x;
   const ty = target.y - raft.y;
@@ -199,7 +199,7 @@ export function botSource(
   seatIndex: number,
   zones: readonly Zone[],
   level: LevelData,
-  observe: () => Snapshot,
+  observe: () => View,
   tuning: BotTuning = DEFAULT_TUNING,
 ): InputSource {
   const zone = zones[seatIndex]!;
@@ -213,7 +213,7 @@ export function botSource(
     back: PACE_BACK,
     still: current === 0,
   };
-  let last: Snapshot | undefined;
+  let last: View | undefined;
   let crossing: Crossing | null = null;
   let plannedAt = -Infinity;
   let bestS = -Infinity;

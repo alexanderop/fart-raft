@@ -5,11 +5,11 @@ import type { Phase, SimEvent } from "./types.ts";
 
 export const initialPhase = (): Phase => ({ kind: "countdown", ticksLeft: COUNTDOWN_TICKS });
 
-export function tickPhase(phase: Phase, tick: number, events: SimEvent[]): Phase {
+/** Every raft counts down in lockstep, so the race's one `go` event is the step's to emit. */
+export function tickPhase(phase: Phase, tick: number): Phase {
   switch (phase.kind) {
     case "countdown":
       if (phase.ticksLeft > 1) return { kind: "countdown", ticksLeft: phase.ticksLeft - 1 };
-      events.push({ type: "go" });
       return { kind: "racing", startTick: tick, nextCheckpoint: 0 };
     default:
       return phase;
@@ -21,15 +21,16 @@ export function reachCheckpoint(
   index: number,
   total: number,
   tick: number,
+  raft: number,
   events: SimEvent[],
 ): Phase {
   if (phase.kind !== "racing" || index !== phase.nextCheckpoint) return phase;
   if (index === total - 1) {
     const timeMs = Math.round((tick - phase.startTick) * STEP * 1000);
-    events.push({ type: "finished", timeMs });
+    events.push({ type: "finished", raft, timeMs });
     return { kind: "finished", timeMs };
   }
-  events.push({ type: "checkpoint", index });
+  events.push({ type: "checkpoint", raft, index });
   return { ...phase, nextCheckpoint: index + 1 };
 }
 
@@ -46,12 +47,21 @@ export function takeHit(
   at: { x: number; y: number },
   /** Unit vector from the hazard to the raft: the way the hit throws it. */
   away: { x: number; y: number },
+  raft: number,
   events: SimEvent[],
 ): boolean {
   if (phase.kind !== "racing" || health.respawnIn > 0 || health.invulnerable > 0) return false;
   health.deaths++;
   health.respawnIn = tuning.respawnTicks;
-  events.push({ type: "hit", deaths: health.deaths, x: at.x, y: at.y, dirX: away.x, dirY: away.y });
+  events.push({
+    type: "hit",
+    raft,
+    deaths: health.deaths,
+    x: at.x,
+    y: at.y,
+    dirX: away.x,
+    dirY: away.y,
+  });
   return true;
 }
 

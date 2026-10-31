@@ -5,6 +5,7 @@ import pond from "../../courses/pond.json";
 import { crewZones, TICK_RATE } from "../sim/constants.ts";
 import { parseLevel } from "../sim/level.ts";
 import { createSim, initPhysics, snapshot, step } from "../sim/sim.ts";
+import { viewOf } from "../sim/view.ts";
 import type { Difficulty, LevelData, SimEvent } from "../sim/types.ts";
 import { botSource } from "./bot.ts";
 import { createSeats, readSeats } from "./sources.ts";
@@ -12,14 +13,14 @@ import { createSeats, readSeats } from "./sources.ts";
 /** Race a crew of bots headless, exactly as the client loop does: read seats → step → snapshot. */
 function race(level: LevelData, crewSize: number, seconds: number, difficulty: Difficulty) {
   const seats = crewZones(crewSize);
-  const sim = createSim(level, seats, { difficulty });
-  let snap = snapshot(sim);
+  const sim = createSim(level, [seats], { difficulty });
+  let snap = viewOf(snapshot(sim), 0);
   const sources = createSeats(seats.length).map((_, i) => botSource(i, seats, level, () => snap));
   const events: SimEvent[] = [];
   const over = () => snap.phase.kind === "finished";
   for (let t = 0; t < seconds * TICK_RATE && !over(); t++) {
     events.push(...step(sim, readSeats(sources)));
-    snap = snapshot(sim);
+    snap = viewOf(snapshot(sim), 0);
   }
   sim.world.free();
   return { snap, events };

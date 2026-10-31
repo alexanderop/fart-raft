@@ -79,7 +79,7 @@ export interface Room {
 
 /** One race: the sim, the riders it was started with, and the events not yet broadcast. Effect-free. */
 function newRace(level: LevelData, difficulty: Difficulty, crew: readonly Rider[]) {
-  const sim = createSim(level, crewZones(crew.length), { difficulty });
+  const sim = createSim(level, [crewZones(crew.length)], { difficulty });
   let pending: SimEvent[] = [];
 
   return {

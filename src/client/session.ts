@@ -7,17 +7,27 @@ import type { Connection } from "../net/client.ts";
 import { FRAME_TICKS, riderOf, type Roster } from "../net/protocol.ts";
 import { crewZones, STEP } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
-import type { LevelData, SimEvent, Snapshot } from "../sim/types.ts";
+import type { LevelData, SimEvent, Snapshot, View } from "../sim/types.ts";
+import { viewOf } from "../sim/view.ts";
 import { crewSize, type GameConfig, type LocalPlayer } from "./ui/menu.ts";
 import { defaultLook, type Look } from "../look.ts";
 
 /** What the renderer draws this frame: two snapshots to blend between, and what happened since the last frame. */
-export type FrameView = { prev: Snapshot; curr: Snapshot; alpha: number; events: SimEvent[] };
+export type FrameView = { prev: View; curr: View; alpha: number; events: SimEvent[] };
+
+/** The raft this client rides: co-op has only raft 0. */
+const OURS = 0;
+
+/** The race-wide `go` and our raft's events: a rival's farts and hits are not ours to feel. */
+const oursOnly = (events: readonly SimEvent[]) =>
+  events.filter((e) => e.type === "go" || e.raft === OURS);
+
+const ourView = (snap: Snapshot): View => viewOf(snap, OURS);
 
 /**
  * Where the game state comes from. A local session steps the sim in this tab, an online one
- * receives snapshots from the server. client/race.ts renders either the same way; the crew size comes
- * from the snapshot (`riders.length`), so it can change between races.
+ * receives snapshots from the server. client/race.ts renders either the same way, from our raft's
+ * View; the crew size comes from it (`riders.length`), so it can change between races.
  */
 export type Session = {
   /** One name tag per rider. */
@@ -70,8 +80,8 @@ export async function localSession(
     i < config.humans ? (players[i]?.look ?? defaultLook(i)) : defaultLook(i),
   );
 
-  let sim = createSim(level, crew, { difficulty: config.difficulty });
-  let prev = snapshot(sim);
+  let sim = createSim(level, [crew], { difficulty: config.difficulty });
+  let prev = ourView(snapshot(sim));
   let curr = prev;
   let pending: SimEvent[] = [];
   // Bots read the latest snapshot, the same data a server broadcasts.
@@ -89,8 +99,8 @@ export async function localSession(
 
   function restart() {
     sim.world.free();
-    sim = createSim(level, crew, { difficulty: config.difficulty });
-    prev = curr = snapshot(sim);
+    sim = createSim(level, [crew], { difficulty: config.difficulty });
+    prev = curr = ourView(snapshot(sim));
     driver.reset();
   }
 
@@ -107,8 +117,8 @@ export async function localSession(
       if (startDown && !startWasDown) restart();
       startWasDown = startDown;
       prev = curr;
-      pending.push(...step(sim, readSeats(driver.sources())));
-      curr = snapshot(sim);
+      pending.push(...oursOnly(step(sim, readSeats(driver.sources()))));
+      curr = ourView(snapshot(sim));
     },
     restart,
     frame(alpha) {
@@ -129,8 +139,8 @@ const looksOf = (roster: Roster) => roster.crew.map((c) => c.look);
 const FRAME_MS = FRAME_TICKS * STEP * 1000;
 
 type Received = {
-  prev: Snapshot;
-  curr: Snapshot;
+  prev: View;
+  curr: View;
   at: number;
   events: SimEvent[];
 };
@@ -166,21 +176,17 @@ export async function onlineSession(
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
     conn.onFrame((frame) => {
+      const view = ourView(frame.snapshot);
       if (state) {
         // A restart with a different crew is a new raft: cut instead of blending riders across.
-        const recrewed = frame.snapshot.riders.length !== state.curr.riders.length;
-        state.prev = recrewed ? frame.snapshot : state.curr;
-        state.curr = frame.snapshot;
+        const recrewed = view.riders.length !== state.curr.riders.length;
+        state.prev = recrewed ? view : state.curr;
+        state.curr = view;
         state.at = performance.now();
-        state.events.push(...frame.events);
+        state.events.push(...oursOnly(frame.events));
         return;
       }
-      state = {
-        prev: frame.snapshot,
-        curr: frame.snapshot,
-        at: performance.now(),
-        events: [...frame.events],
-      };
+      state = { prev: view, curr: view, at: performance.now(), events: oursOnly(frame.events) };
       resolve(state);
     });
   });

@@ -1,5 +1,5 @@
 import type { Zone } from "../sim/constants.ts";
-import type { LevelData, Snapshot } from "../sim/types.ts";
+import type { LevelData, View } from "../sim/types.ts";
 import { botSource } from "./bot.ts";
 import { gamepadSource, isFarting, type Gamepads } from "./gamepad.ts";
 import { CONTROLS, keyboardSource, PLAYER_KEYS, WASD_OR_ARROWS } from "./keyboard.ts";
@@ -24,7 +24,7 @@ import { touchSource } from "./touch.ts";
 export function createSeatDriver(
   humans: number,
   zones: readonly Zone[],
-  observe: () => Snapshot,
+  observe: () => View,
   lvl: LevelData,
   heading: () => number,
   pads: Gamepads,

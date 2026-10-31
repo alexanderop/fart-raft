@@ -102,6 +102,8 @@ export function applyWaterDrag(raft: Raft, flow: Vec2): void {
  */
 export function applyInputs(
   raft: Raft,
+  /** Which raft this is in the race (`SimEvent.raft`). */
+  index: number,
   inputs: readonly SeatInput[],
   canFart: boolean,
   events: SimEvent[],
@@ -140,7 +142,7 @@ export function applyInputs(
     const x = pos.x - dirX * RIDER_RING;
     const y = pos.y - dirY * RIDER_RING;
     // The gas leaves opposite to the push.
-    events.push({ type: "fart", seat: i, x, y, dirX: -dirX, dirY: -dirY });
+    events.push({ type: "fart", raft: index, seat: i, x, y, dirX: -dirX, dirY: -dirY });
   });
 }
 

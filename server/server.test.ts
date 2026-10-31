@@ -117,8 +117,8 @@ describe("given the server listening on a free port", () => {
           guest.start();
           host.start();
           const frame = await new Promise<Frame>((resolve) => guest.onFrame(resolve));
-          expect(frame.snapshot.phase.kind).toBe("countdown");
-          expect(frame.snapshot.riders).toHaveLength(2);
+          expect(frame.snapshot.crews[0]!.phase.kind).toBe("countdown");
+          expect(frame.snapshot.crews[0]!.riders).toHaveLength(2);
 
           host.send({ move: { x: 0, y: 0 }, fart: true });
           host.restart();

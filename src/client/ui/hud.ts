@@ -2,7 +2,7 @@ import { Vector3, type PerspectiveCamera } from "three";
 import { nearestS, sampleChannel } from "../../sim/channel.ts";
 import { GAS_MAX, MAX_CREW, TICK_RATE } from "../../sim/constants.ts";
 import { SEAT_COLORS } from "../render/zones.ts";
-import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import type { LevelData, Pose, SimEvent, View } from "../../sim/types.ts";
 import "./deaths.css";
 
 const LOW_GAS = 0.25;
@@ -37,7 +37,7 @@ export function formatTime(ms: number): string {
 
 export type ProgressTrack = {
   /** 0..1 along the course. */
-  at(snap: Snapshot): number;
+  at(snap: View): number;
   /** Where each checkpoint sits on the bar, 0..1, in race order. */
   markers: number[];
 };
@@ -180,7 +180,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
     }
   }
 
-  function placeTags(raft: Pose, riders: Snapshot["riders"]) {
+  function placeTags(raft: Pose, riders: View["riders"]) {
     const cos = Math.cos(raft.rot);
     const sin = Math.sin(raft.rot);
     tags.forEach((tag, i) => {
@@ -230,7 +230,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         show("Wipeout!", "slam");
       }
     },
-    draw(snap: Snapshot, raft: Pose) {
+    draw(snap: View, raft: Pose) {
       const { phase } = snap;
       const ms =
         phase.kind === "countdown"

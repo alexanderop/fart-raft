@@ -1,5 +1,5 @@
 import { RAFT_RADIUS, TICK_RATE } from "../../sim/constants.ts";
-import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import type { Pose, SimEvent, View } from "../../sim/types.ts";
 import { isSilent, masterLevel, type Volume, type VolumeStore } from "./volume.ts";
 
 // Everything but the fart is synthesized with the Web Audio API. Farts are recorded CC0 clips
@@ -534,7 +534,7 @@ export function createAudio(volume: VolumeStore) {
       }
     },
     /** Once per frame: countdown beeps follow the phase, panning follows the raft and camera. */
-    update(snapshot: Snapshot, heading: number) {
+    update(snapshot: View, heading: number) {
       const raft: Pose = snapshot.raft;
       listener = { x: raft.x, y: raft.y, heading };
       const phase = snapshot.phase;

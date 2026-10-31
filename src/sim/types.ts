@@ -14,22 +14,27 @@ export type SeatInput = {
 
 export const IDLE_INPUT: SeatInput = { move: { x: 0, y: 0 }, fart: false };
 
-/** Event Queue: what happened during one tick. The client turns these into sound, particles and UI. */
+/**
+ * Event Queue: what happened during one tick. The client turns these into sound, particles and UI.
+ * `raft` is the raft it happened to (an index into `Snapshot.crews`); `fart.seat` is the rider
+ * within that raft. `go` is the whole race's.
+ */
 export type SimEvent =
-  | { type: "fart"; seat: number; x: number; y: number; dirX: number; dirY: number }
-  | { type: "bump"; x: number; y: number; speed: number }
+  | { type: "fart"; raft: number; seat: number; x: number; y: number; dirX: number; dirY: number }
+  /** The raft hit something solid at `speed` m/s; `rival` when that was another raft (Bump only). */
+  | { type: "bump"; raft: number; x: number; y: number; speed: number; rival: boolean }
   | { type: "go" }
-  | { type: "checkpoint"; index: number }
-  | { type: "finished"; timeMs: number }
+  | { type: "checkpoint"; raft: number; index: number }
+  | { type: "finished"; raft: number; timeMs: number }
   /**
    * A hazard or a spike hit wiped the crew out: `deaths` counts every wipeout so far. (dirX, dirY)
    * is the unit direction the hit throws the raft. It respawns at the last gate shortly after.
    */
-  | { type: "hit"; deaths: number; x: number; y: number; dirX: number; dirY: number }
+  | { type: "hit"; raft: number; deaths: number; x: number; y: number; dirX: number; dirY: number }
   /** The raft is back at the last gate passed (or the start): (x, y) is where it reappeared. */
-  | { type: "respawn"; x: number; y: number }
+  | { type: "respawn"; raft: number; x: number; y: number }
   /** The raft ran onto a boost pad at (x, y): it is shoved along the unit vector (dirX, dirY). */
-  | { type: "boost"; x: number; y: number; dirX: number; dirY: number };
+  | { type: "boost"; raft: number; x: number; y: number; dirX: number; dirY: number };
 
 export type Phase =
   | { kind: "countdown"; ticksLeft: number }
@@ -44,10 +49,11 @@ export type RiderPose = { x: number; y: number; face: number };
 /** How hard the course plays: "chill" slows the hazards and forgives more, "wild" is full speed. */
 export type Difficulty = "chill" | "wild";
 
-export type Snapshot = {
-  tick: number;
-  /** The race's difficulty: bots and the renderer derive hazard time from it (`hazardTime`). */
-  difficulty: Difficulty;
+/** How rafts in one race meet: "ghost" rafts pass through each other, "bump" rafts collide. */
+export type Contact = "ghost" | "bump";
+
+/** One raft and its crew, as everyone sees it. */
+export type Crew = {
   raft: Pose;
   riders: RiderPose[];
   gas: number[];
@@ -57,9 +63,21 @@ export type Snapshot = {
   respawnIn: number;
   /** Ticks of grace left after a respawn: the raft cannot be hurt while this is above 0. */
   invulnerable: number;
-  hazards: (Pose & { id: string })[];
   phase: Phase;
 };
+
+/** The whole race, as the server sends it. `crews[0]` is co-op's only raft; in a team race 0 = Red, 1 = Blue. */
+export type Snapshot = {
+  tick: number;
+  /** The race's difficulty: bots and the renderer derive hazard time from it (`hazardTime`). */
+  difficulty: Difficulty;
+  contact: Contact;
+  hazards: (Pose & { id: string })[];
+  crews: Crew[];
+};
+
+/** One raft's view of the race (`viewOf`): its crew, the shared course state, and every other raft. */
+export type View = Crew & Omit<Snapshot, "crews"> & { rivals: Crew[] };
 
 // ── Level data: exported from Blender as JSON (see CLAUDE.md "Blender pipeline") ──
 

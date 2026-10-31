@@ -15,7 +15,7 @@ describe("given a sim that has raced for four seconds", () => {
   let snap: Snapshot;
   beforeAll(async () => {
     await initPhysics();
-    const sim = createSim(parseLevel(pond), crewZones(MAX_CREW));
+    const sim = createSim(parseLevel(pond), [crewZones(MAX_CREW)]);
     const farting: SeatInput = { move: { x: 0.25, y: -0.5 }, fart: true };
     for (let t = 0; t < 240; t++) {
       events.push(...step(sim, [farting, farting, farting, farting]));
@@ -27,7 +27,7 @@ describe("given a sim that has raced for four seconds", () => {
   describe("when its snapshot goes through JSON", () => {
     it("should decode to an equal snapshot", () => {
       expect(snap.tick).toBe(240);
-      expect(snap.phase.kind).toBe("racing");
+      expect(snap.crews[0]!.phase.kind).toBe("racing");
       expect(overTheWire(SnapshotSchema, snap)).toEqual(snap);
     });
   });

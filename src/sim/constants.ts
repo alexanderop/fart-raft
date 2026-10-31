@@ -116,6 +116,16 @@ export const RESPAWN_BACK = 6;
 export const INVULNERABLE_TICKS = Math.round(1.5 * TICK_RATE);
 
 /**
+ * Team races put rafts side by side across the start (and each gate), this far apart center to
+ * center: two hulls plus a hand's width, so in Bump they start apart, and both still fit a 14 m channel.
+ */
+export const TEAM_SPACING = 2 * RAFT_HULL + 0.4;
+/** Bump race: a fart shoves a rival raft at this fraction of the push on the farter's own raft, so sabotage never beats racing. */
+export const RIVAL_BLAST = 0.5;
+/** Bump race: a fart reaches a rival hull up to this far (m) from the rider, fading to nothing at the edge. */
+export const RIVAL_REACH = 3;
+
+/**
  * What a difficulty changes. `hazardRate` is how fast hazard time runs against real time: every
  * hazard's motion is a pure function of hazard time (sim/hazards/shape.ts `hazardTime`), so a
  * slower clock slows every spinner, hammer, piston and drop gate at once, windows included.

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { nearestS, pointAt, sampleChannel } from "../../sim/channel.ts";
-import type { LevelData, Pose, Snapshot } from "../../sim/types.ts";
+import type { LevelData, Pose, View } from "../../sim/types.ts";
 import { jumped } from "./coords.ts";
 import { clamp, damp } from "./spring.ts";
 
@@ -16,7 +16,7 @@ export type ChaseCamera = {
     camera: THREE.PerspectiveCamera,
     dt: number,
     pose: Pose,
-    curr: Snapshot,
+    curr: View,
     vel: { x: number; y: number },
     thrust: number,
     shake: THREE.Vector3,
@@ -90,7 +90,7 @@ export function createChaseCamera(level: LevelData): ChaseCamera {
   let lastPose: Pose = level.spawn;
 
   /** Unit heading in sim space the camera wants to face. */
-  function heading(pose: Pose, curr: Snapshot) {
+  function heading(pose: Pose, curr: View) {
     if (route) {
       const p = pointAt(route, nearestS(route, pose) + HEADING_AHEAD);
       return { x: p.tx, y: p.ty };

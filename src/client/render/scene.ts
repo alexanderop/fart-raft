@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { crewZones } from "../../sim/constants.ts";
 import { hazardTime } from "../../sim/hazards/shape.ts";
-import type { HazardDef, LevelData, SimEvent, Snapshot } from "../../sim/types.ts";
+import type { HazardDef, LevelData, SimEvent, View } from "../../sim/types.ts";
 import { applyPose, lerpPose } from "./coords.ts";
 import { createSky, createWater, HAZE } from "./env.ts";
 import { loadKit } from "./kit.ts";
@@ -21,7 +21,7 @@ export type SceneView = {
   camera: THREE.PerspectiveCamera;
   /** Feed every drained SimEvent here; animation reacts to events and snapshots only. */
   onEvent(e: SimEvent): void;
-  draw(prev: Snapshot, curr: Snapshot, alpha: number, shake: THREE.Vector3): void;
+  draw(prev: View, curr: View, alpha: number, shake: THREE.Vector3): void;
   /** One look per rider (animal, color, costume); cheap to call every frame. */
   setLooks(looks: readonly Look[]): void;
   /** Frees the GPU side (geometries, materials, textures, the WebGL context) and removes the canvas. */

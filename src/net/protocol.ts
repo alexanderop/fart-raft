@@ -30,44 +30,71 @@ const Phase = Schema.Union([
 export const Difficulty = Schema.Literals(DIFFICULTIES);
 export const isDifficulty = Schema.is(Difficulty);
 
-export const Snapshot = Schema.Struct({
-  tick: Num,
-  difficulty: Difficulty,
+/** How the rafts in a race meet: "ghost" (pass through) or "bump" (collide). */
+export const Contact = Schema.Literals(["ghost", "bump"]);
+
+export const Crew = Schema.Struct({
   raft: Pose,
   riders: Schema.mutable(Schema.Array(RiderPose)),
   gas: Schema.mutable(Schema.Array(Num)),
   deaths: Num,
   respawnIn: Num,
   invulnerable: Num,
+  phase: Phase,
+});
+
+export const Snapshot = Schema.Struct({
+  tick: Num,
+  difficulty: Difficulty,
+  contact: Contact,
   hazards: Schema.mutable(
     Schema.Array(Schema.Struct({ id: Schema.String, x: Num, y: Num, rot: Num })),
   ),
-  phase: Phase,
+  crews: Schema.mutable(Schema.Array(Crew)),
 });
+
+/** Which raft in `Snapshot.crews` an event happened to. */
+const RaftIndex = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const SimEvent = Schema.Union([
   Schema.Struct({
     type: Schema.tag("fart"),
+    raft: RaftIndex,
     seat: SeatIndex,
     x: Num,
     y: Num,
     dirX: Num,
     dirY: Num,
   }),
-  Schema.Struct({ type: Schema.tag("bump"), x: Num, y: Num, speed: Num }),
+  Schema.Struct({
+    type: Schema.tag("bump"),
+    raft: RaftIndex,
+    x: Num,
+    y: Num,
+    speed: Num,
+    rival: Schema.Boolean,
+  }),
   Schema.Struct({ type: Schema.tag("go") }),
-  Schema.Struct({ type: Schema.tag("checkpoint"), index: Num }),
-  Schema.Struct({ type: Schema.tag("finished"), timeMs: Num }),
+  Schema.Struct({ type: Schema.tag("checkpoint"), raft: RaftIndex, index: Num }),
+  Schema.Struct({ type: Schema.tag("finished"), raft: RaftIndex, timeMs: Num }),
   Schema.Struct({
     type: Schema.tag("hit"),
+    raft: RaftIndex,
     deaths: Num,
     x: Num,
     y: Num,
     dirX: Num,
     dirY: Num,
   }),
-  Schema.Struct({ type: Schema.tag("respawn"), x: Num, y: Num }),
-  Schema.Struct({ type: Schema.tag("boost"), x: Num, y: Num, dirX: Num, dirY: Num }),
+  Schema.Struct({ type: Schema.tag("respawn"), raft: RaftIndex, x: Num, y: Num }),
+  Schema.Struct({
+    type: Schema.tag("boost"),
+    raft: RaftIndex,
+    x: Num,
+    y: Num,
+    dirX: Num,
+    dirY: Num,
+  }),
 ]);
 
 /** Courses a room can race. The client and the server both map these names to course JSON. */
@@ -175,6 +202,8 @@ type Expect<T extends true> = T;
 export type Drift = [
   Expect<Same<typeof SeatInput.Type, Sim.SeatInput>>,
   Expect<Same<typeof Snapshot.Type, Sim.Snapshot>>,
+  Expect<Same<typeof Crew.Type, Sim.Crew>>,
+  Expect<Same<typeof Contact.Type, Sim.Contact>>,
   Expect<Same<typeof SimEvent.Type, Sim.SimEvent>>,
   Expect<Same<typeof Phase.Type, Sim.Phase>>,
   Expect<Same<typeof Pose.Type, Sim.Pose>>,

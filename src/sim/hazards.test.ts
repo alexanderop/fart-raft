@@ -35,6 +35,7 @@ import { isIsland, islandOutline, islandRadius } from "./island.ts";
 import { parseLevel } from "./level.ts";
 import { levelWalls } from "./channel.ts";
 import { createSim, initPhysics, snapshot, step } from "./sim.ts";
+import { viewOf } from "./view.ts";
 import {
   IDLE_INPUT,
   type Difficulty,
@@ -92,19 +93,19 @@ type Hit = { tick: number; event: Extract<SimEvent, { type: "hit" }> };
  * more ticks. Returns the hit and the raft's velocity, spin and position right after it.
  */
 function firstHit(level: LevelData, inputs: SeatInput[] = rearFart, after = 0) {
-  const sim = createSim(level, FULL, WILD);
+  const sim = createSim(level, [FULL], WILD);
   let hit: Hit | undefined;
   for (let t = 0; t < COUNTDOWN_TICKS + 15 * TICK_RATE && !hit; t++) {
     for (const event of step(sim, inputs)) if (event.type === "hit") hit = { tick: t, event };
   }
   if (!hit) throw new Error("the raft was never hit");
-  const velocity = sim.raft.body.linvel();
-  const spin = sim.raft.body.angvel();
-  const raft = snapshot(sim).raft;
+  const velocity = sim.racers[0]!.raft.body.linvel();
+  const spin = sim.racers[0]!.raft.body.angvel();
+  const raft = viewOf(snapshot(sim), 0).raft;
   const trail: { x: number; y: number }[] = [];
   for (let t = 0; t < after; t++) {
     step(sim, idle);
-    trail.push(sim.raft.body.linvel());
+    trail.push(sim.racers[0]!.raft.body.linvel());
   }
   return { sim, hit, velocity, spin, raft, trail };
 }
@@ -149,7 +150,7 @@ describe("given a raft that rams a hazard", () => {
         events.push(...step(sim, rearFart));
       expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
       expect(events.filter((e) => e.type === "respawn")).toHaveLength(1);
-      expect(snapshot(sim).invulnerable).toBeGreaterThan(0);
+      expect(viewOf(snapshot(sim), 0).invulnerable).toBeGreaterThan(0);
     });
   });
 
@@ -177,12 +178,12 @@ describe("given a raft that rams a hazard", () => {
     it("should count the tumble down, then the grace ticks, in the snapshot", () => {
       const { sim, hit } = firstHit(pond(bar));
       expect(hit.event.deaths).toBe(1);
-      expect(snapshot(sim).respawnIn).toBe(RESPAWN_TICKS);
+      expect(viewOf(snapshot(sim), 0).respawnIn).toBe(RESPAWN_TICKS);
       for (let t = 0; t < RESPAWN_TICKS; t++) step(sim, idle);
-      expect(snapshot(sim).respawnIn).toBe(0);
-      expect(snapshot(sim).invulnerable).toBe(INVULNERABLE_TICKS);
+      expect(viewOf(snapshot(sim), 0).respawnIn).toBe(0);
+      expect(viewOf(snapshot(sim), 0).invulnerable).toBe(INVULNERABLE_TICKS);
       step(sim, idle);
-      expect(snapshot(sim).invulnerable).toBe(INVULNERABLE_TICKS - 1);
+      expect(viewOf(snapshot(sim), 0).invulnerable).toBe(INVULNERABLE_TICKS - 1);
     });
   });
 });
@@ -203,11 +204,11 @@ describe("given a rolling log", () => {
 
   describe("when time passes", () => {
     it("should run back and forth across its axis on a fixed schedule", () => {
-      const sim = createSim(pond(log), FULL, WILD);
+      const sim = createSim(pond(log), [FULL], WILD);
       const at: { x: number; y: number; rot: number }[] = [];
       for (let t = 0; t < 8 * TICK_RATE; t++) {
         step(sim, idle);
-        at.push(snapshot(sim).hazards[0]!);
+        at.push(viewOf(snapshot(sim), 0).hazards[0]!);
       }
       const secs = (s: number) => at[Math.round(s * TICK_RATE) - 1]!;
       expect(secs(Math.PI / 2).x).toBeCloseTo(log.x - 10, 1); // −sin(rot) · run: run = +range
@@ -217,9 +218,9 @@ describe("given a rolling log", () => {
     });
 
     it("should be where the shared schedule says", () => {
-      const sim = createSim(pond(log), FULL, WILD);
+      const sim = createSim(pond(log), [FULL], WILD);
       for (let t = 0; t < 200; t++) step(sim, idle);
-      const { x, y } = snapshot(sim).hazards[0]!;
+      const { x, y } = viewOf(snapshot(sim), 0).hazards[0]!;
       const expected = logCenter(log, 200 / TICK_RATE);
       expect(x).toBeCloseTo(expected.x, 2);
       expect(y).toBeCloseTo(expected.y, 2);
@@ -229,7 +230,7 @@ describe("given a rolling log", () => {
   describe("when it rolls into a raft that is waiting in its way", () => {
     it("should wipe the crew out and throw the raft away from the log", () => {
       // Phased so the log is at the far side of its run when the race starts, then rolls in.
-      const sim = createSim(pond({ ...log, x: 6, range: 8, phase: -3 }), FULL, WILD);
+      const sim = createSim(pond({ ...log, x: 6, range: 8, phase: -3 }), [FULL], WILD);
       const lost: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 12 * TICK_RATE; t++)
         lost.push(...step(sim, idle).filter((e) => e.type === "hit"));
@@ -263,9 +264,9 @@ describe("given a spiked-ball bumper", () => {
     });
 
     it("should stay where it floats", () => {
-      const sim = createSim(pond(bumper), FULL, WILD);
+      const sim = createSim(pond(bumper), [FULL], WILD);
       for (let t = 0; t < 120; t++) step(sim, idle);
-      const { x, y } = snapshot(sim).hazards[0]!;
+      const { x, y } = viewOf(snapshot(sim), 0).hazards[0]!;
       expect([x, y]).toEqual([bumper.x, bumper.y]);
     });
   });
@@ -311,9 +312,9 @@ describe("given an island", () => {
       hazards: [],
       walls: [{ ...island, x: 14, y: 0, rot: 0 }],
     };
-    const sim = createSim(level, FULL, WILD);
+    const sim = createSim(level, [FULL], WILD);
     for (let t = 0; t < COUNTDOWN_TICKS + 8 * TICK_RATE; t++) step(sim, rearFart);
-    const { raft } = snapshot(sim);
+    const { raft } = viewOf(snapshot(sim), 0);
     // The octagon's flat side is at x = 14 − 3; the raft's hull is 2.9 m. It touches near 8.1.
     expect(raft.x).toBeGreaterThan(7);
     expect(raft.x).toBeLessThan(8.5);
@@ -364,7 +365,7 @@ describe("given a hammer", () => {
   describe("when the raft waits under it", () => {
     it("should be safe while the hammer is up and wiped out when it slams", () => {
       // The raft sits on the smash zone from the start; nobody farts.
-      const sim = createSim({ ...pond(hammer), spawn: { x: 12, y: 0, rot: 0 } }, FULL, WILD);
+      const sim = createSim({ ...pond(hammer), spawn: { x: 12, y: 0, rot: 0 } }, [FULL], WILD);
       const hits: number[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 2 * period * TICK_RATE; t++)
         for (const e of step(sim, idle)) if (e.type === "hit") hits.push((t + 1) / TICK_RATE);
@@ -401,9 +402,9 @@ describe("given a piston", () => {
     });
 
     it("should be where the shared schedule says", () => {
-      const sim = createSim(pond(piston), FULL, WILD);
+      const sim = createSim(pond(piston), [FULL], WILD);
       for (let t = 0; t < 150; t++) step(sim, idle);
-      const { x, y } = snapshot(sim).hazards[0]!;
+      const { x, y } = viewOf(snapshot(sim), 0).hazards[0]!;
       const expected = pistonCenter(piston, 150 / TICK_RATE);
       expect(x).toBeCloseTo(expected.x, 2);
       expect(y).toBeCloseTo(expected.y, 2);
@@ -485,7 +486,7 @@ describe("given a drop gate", () => {
 
   describe("when the raft waits under it", () => {
     it("should be safe while the bar is up and wiped out when it slams", () => {
-      const sim = createSim({ ...pond(dropgate), spawn: { x: 12, y: 0, rot: 0 } }, FULL, WILD);
+      const sim = createSim({ ...pond(dropgate), spawn: { x: 12, y: 0, rot: 0 } }, [FULL], WILD);
       const hits: number[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 2 * period * TICK_RATE; t++)
         for (const e of step(sim, idle)) if (e.type === "hit") hits.push((t + 1) / TICK_RATE);
@@ -498,11 +499,11 @@ describe("given a drop gate", () => {
     it("should let the raft pass", () => {
       // Phased so the bar stays up for the whole run: it next slams long after the raft is through.
       const late = { ...dropgate, period: 30, phase: 0.6 };
-      const sim = createSim(pond(late), FULL, WILD);
+      const sim = createSim(pond(late), [FULL], WILD);
       const events: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
       expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
-      expect(snapshot(sim).raft.x).toBeGreaterThan(dropgate.x + 4);
+      expect(viewOf(snapshot(sim), 0).raft.x).toBeGreaterThan(dropgate.x + 4);
     });
   });
 });
@@ -550,11 +551,11 @@ describe("given a double gate", () => {
     it("should let the raft pass", () => {
       // It next swings shut 37 s in, long after the raft is through.
       const late = { ...doublegate, period: 40 };
-      const sim = createSim(pond(late), FULL, WILD);
+      const sim = createSim(pond(late), [FULL], WILD);
       const events: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
       expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
-      expect(snapshot(sim).raft.x).toBeGreaterThan(doublegate.x + 4);
+      expect(viewOf(snapshot(sim), 0).raft.x).toBeGreaterThan(doublegate.x + 4);
     });
   });
 
@@ -618,11 +619,11 @@ describe("given a mace", () => {
       const high = { ...mace, speed: 0, y: -5.5, phase: Math.PI / 2 };
       expect(maceBob(high, 0).y).toBeCloseTo(0);
       expect(maceLow(high, 0)).toBe(false);
-      const sim = createSim(pond(high), FULL, WILD);
+      const sim = createSim(pond(high), [FULL], WILD);
       const events: SimEvent[] = [];
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
       expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
-      expect(snapshot(sim).raft.x).toBeGreaterThan(mace.x + 4);
+      expect(viewOf(snapshot(sim), 0).raft.x).toBeGreaterThan(mace.x + 4);
     });
   });
 });
@@ -662,9 +663,9 @@ describe("given a mine", () => {
     });
 
     it("should be where the shared schedule says, inside the box the bots keep clear of", () => {
-      const sim = createSim(pond(drifting), FULL, WILD);
+      const sim = createSim(pond(drifting), [FULL], WILD);
       for (let t = 0; t < 150; t++) step(sim, idle);
-      const { x, y } = snapshot(sim).hazards[0]!;
+      const { x, y } = viewOf(snapshot(sim), 0).hazards[0]!;
       const expected = mineCenter(drifting, 150 / TICK_RATE);
       expect(x).toBeCloseTo(expected.x, 2);
       expect(y).toBeCloseTo(expected.y, 2);
@@ -686,7 +687,7 @@ const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Run a pond with `hazard` for `ticks` while the crew wobbles about, and return the snapshot. */
 const runFor = (hazard: HazardDef, ticks: number, difficulty?: Difficulty) => {
-  const sim = createSim(pond(hazard), FULL, difficulty && { difficulty });
+  const sim = createSim(pond(hazard), [FULL], difficulty && { difficulty });
   for (let t = 0; t < ticks; t++)
     step(
       sim,
@@ -695,7 +696,7 @@ const runFor = (hazard: HazardDef, ticks: number, difficulty?: Difficulty) => {
         fart: (t + i * 7) % 40 < 25,
       })),
     );
-  const snap = snapshot(sim);
+  const snap = viewOf(snapshot(sim), 0);
   sim.world.free();
   return snap;
 };
@@ -703,15 +704,15 @@ const runFor = (hazard: HazardDef, ticks: number, difficulty?: Difficulty) => {
 /** How far (radians) rider 0 walks round the ring in half a second. */
 const walked = (d: Difficulty, crew: number) => {
   const zones = crewZones(crew);
-  const sim = createSim(pond(bar), zones, { difficulty: d });
-  const start = snapshot(sim).riders[0]!;
+  const sim = createSim(pond(bar), [zones], { difficulty: d });
+  const start = viewOf(snapshot(sim), 0).riders[0]!;
   // Stick toward +y: rider 0 (rear, or rear-left) slides along the ring.
   for (let t = 0; t < 30; t++)
     step(
       sim,
       zones.map(() => ({ move: { x: 0, y: 1 }, fart: false })),
     );
-  const end = snapshot(sim).riders[0]!;
+  const end = viewOf(snapshot(sim), 0).riders[0]!;
   sim.world.free();
   return Math.abs(wrapAngle(Math.atan2(end.y, end.x) - Math.atan2(start.y, start.x)));
 };
@@ -785,9 +786,9 @@ describe("given a difficulty", () => {
     it("should end in the identical snapshot", () => {
       const wobbly: LevelData = { ...pond(spinner), hazards: [spinner, { ...bumper, x: 18 }] };
       const once = () => {
-        const sim = createSim(wobbly, FULL, { difficulty: d });
+        const sim = createSim(wobbly, [FULL], { difficulty: d });
         for (let t = 0; t < COUNTDOWN_TICKS + 4 * TICK_RATE; t++) step(sim, rearFart);
-        const snap = snapshot(sim);
+        const snap = viewOf(snapshot(sim), 0);
         sim.world.free();
         return snap;
       };
@@ -807,7 +808,7 @@ describe("given a difficulty", () => {
 
   describe("when a chill crew wipes out", () => {
     it("should respawn sooner and stay safe longer than a wild one", () => {
-      const sim = createSim(pond(bar), FULL);
+      const sim = createSim(pond(bar), [FULL]);
       let hit = false;
       for (let t = 0; t < COUNTDOWN_TICKS + 15 * TICK_RATE && !hit; t++)
         hit = step(sim, rearFart).some((e) => e.type === "hit");
@@ -815,9 +816,9 @@ describe("given a difficulty", () => {
       const { respawnTicks, invulnerableTicks } = DIFFICULTY.chill;
       expect(respawnTicks).toBeLessThan(RESPAWN_TICKS);
       expect(invulnerableTicks).toBeGreaterThan(INVULNERABLE_TICKS);
-      expect(snapshot(sim).respawnIn).toBe(respawnTicks);
+      expect(viewOf(snapshot(sim), 0).respawnIn).toBe(respawnTicks);
       for (let t = 0; t < respawnTicks; t++) step(sim, idle);
-      expect(snapshot(sim).invulnerable).toBe(invulnerableTicks);
+      expect(viewOf(snapshot(sim), 0).invulnerable).toBe(invulnerableTicks);
       // Farting straight back into the bar through the whole grace window never wipes it out.
       const events: SimEvent[] = [];
       for (let t = 0; t < invulnerableTicks - 1; t++) events.push(...step(sim, rearFart));

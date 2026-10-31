@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { STEP } from "../../sim/constants.ts";
-import type { Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import type { Pose, SimEvent, View } from "../../sim/types.ts";
 import { jumped } from "./coords.ts";
 import { clamp, damp, spring, stepSpring, wrapAngle } from "./spring.ts";
 
@@ -10,7 +10,7 @@ import { clamp, damp, spring, stepSpring, wrapAngle } from "./spring.ts";
  */
 export type RaftMotion = {
   onEvent(e: SimEvent, now: number): void;
-  update(dt: number, now: number, prev: Snapshot, curr: Snapshot, pose: Pose): void;
+  update(dt: number, now: number, prev: View, curr: View, pose: Pose): void;
   /** 0..1 summed seat thrust, smoothed. Used for the camera FOV kick. */
   readonly thrust: number;
   /** Smoothed world velocity (sim frame). */

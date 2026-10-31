@@ -3,7 +3,7 @@ import { padAt } from "../sim/boost.ts";
 import { BOOST_ACCEL, BOOST_SPEED, hazardRate, RAFT_HULL } from "../sim/constants.ts";
 import { hazardBoxes, hazardReach } from "../sim/hazards/index.ts";
 import { hazardTime } from "../sim/hazards/shape.ts";
-import type { Box, Channel, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
+import type { Box, Channel, LevelData, View, Vec2 } from "../sim/types.ts";
 import { distToBox } from "./geometry.ts";
 
 // A hazard hit costs a life, so bots do not blunder through a spinner. Hazards move on a fixed
@@ -162,7 +162,7 @@ export type CrossingPaces = {
 export function planCrossing(
   level: LevelData,
   frame: Frame,
-  snap: Snapshot,
+  snap: View,
   paces: CrossingPaces,
   along = 0,
   keep: { lat: number; pace: number; holdFor: number } | null = null,

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { MAX_CREW, TICK_RATE } from "../../sim/constants.ts";
-import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
+import type { LevelData, Pose, SimEvent, View } from "../../sim/types.ts";
 import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring.ts";
 import { defaultLook, lookColor, type Look } from "../../look.ts";
 import { bodyTemplate, dress, tinted, type Dressed } from "./outfits.ts";
@@ -11,7 +11,7 @@ import { bodyTemplate, dress, tinted, type Dressed } from "./outfits.ts";
  */
 export type RiderAnimator = {
   onEvent(e: SimEvent, now: number): void;
-  update(dt: number, now: number, prev: Snapshot, curr: Snapshot, alpha: number, pose: Pose): void;
+  update(dt: number, now: number, prev: View, curr: View, alpha: number, pose: Pose): void;
   /** One look per rider: a changed one swaps that rider's animal, color and costume. */
   setLooks(looks: readonly Look[]): void;
   reset(): void;
@@ -257,8 +257,8 @@ export function createRiderAnimator(raft: THREE.Object3D, level: LevelData): Rid
   function update(
     dt: number,
     now: number,
-    prev: Snapshot,
-    curr: Snapshot,
+    prev: View,
+    curr: View,
     alpha: number,
     pose: Pose,
   ): void {
