@@ -308,6 +308,60 @@ describe("given a room whose host changes the mode", () => {
       ));
   });
 
+  describe("when the host sends the room back to the lobby", () => {
+    it("should end the race, keep everyone and their teams, and race fresh from the next Start", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* roomOf("ghost");
+          const ann = yield* lease(room, "Ann");
+          const bo = yield* lease(room, "Bo");
+          const cy = yield* lease(room, "Cy");
+          yield* room.start(ann.welcome.token);
+          yield* play(1);
+          yield* drain(ann.inbox);
+
+          yield* room.toLobby(ann.welcome.token);
+          const lobby = yield* latestRoster(ann.inbox);
+          expect(lobby.started).toBe(false);
+          expect(lobby.crew).toEqual([]);
+          expect(teamsOf(lobby).slice(0, 3)).toEqual([0, 1, 0]);
+          yield* play(1);
+          expect(yield* framesIn(ann.inbox)).toEqual([]);
+
+          yield* room.setTeam(cy.welcome.token, 1);
+          yield* room.setMode(ann.welcome.token, "bump");
+          yield* room.start(ann.welcome.token);
+          yield* play(1);
+          const { frames, roster } = yield* drain(bo.inbox);
+          expect(frames[0]!.snapshot.tick).toBe(3);
+          expect(frames.at(-1)!.snapshot.contact).toBe("bump");
+          expect(frames.at(-1)!.snapshot.crews.map((c) => c.riders.length)).toEqual([1, 2]);
+          expect(roster?.crew.map((c) => [c.name, c.raft])).toEqual([
+            ["Ann", 0],
+            ["Bo", 1],
+            ["Cy", 1],
+          ]);
+        }),
+      ));
+
+    it("should be ignored from anyone but the host", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* roomOf("ghost");
+          const ann = yield* lease(room, "Ann");
+          const bo = yield* lease(room, "Bo");
+          yield* room.start(ann.welcome.token);
+          yield* play(1);
+          yield* drain(ann.inbox);
+          yield* room.toLobby(bo.welcome.token);
+          yield* play(1);
+          const { frames, roster } = yield* drain(ann.inbox);
+          expect(frames.length).toBeGreaterThan(10);
+          expect(roster).toBeUndefined();
+        }),
+      ));
+  });
+
   describe("when the host switches mid-race", () => {
     it("should leave the race alone and apply the mode from the restart", () =>
       run(

@@ -1805,10 +1805,29 @@ button {
   opacity: 0.55;
 }
 
-.team-pick-mode {
+.team-pick-lobby,
+.finish-lobby {
   background: #eef7fd;
   color: var(--outline);
   -webkit-text-stroke: 0;
+}
+
+.finish-lobby {
+  pointer-events: auto;
+  margin: 4px 0 10px;
+  padding: 10px 18px;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 900;
+  border: 4px solid var(--outline);
+  border-radius: 16px;
+  box-shadow: 0 4px 0 var(--outline);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.finish-lobby[hidden] {
+  display: none;
 }
 
 @media (max-width: 480px) {

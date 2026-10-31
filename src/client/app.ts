@@ -38,8 +38,16 @@ export type AppState =
   | { kind: "online"; server: string; room?: string }
   /** Seated in a room, waiting for the host to start (or for the first frame, mid-race). */
   | { kind: "room"; conn: Connection; invite: string }
-  /** A race on screen. `conn` is set online, for the spectating banner. */
-  | { kind: "racing"; level: LevelData; session: Promise<Session>; conn?: Connection };
+  /**
+   * A race on screen. `online` is set online: the racing state owns the connection until the host
+   * sends the room back to its lobby, which hands it on to a `room` state.
+   */
+  | {
+      kind: "racing";
+      level: LevelData;
+      session: Promise<Session>;
+      online?: { conn: Connection; invite: string };
+    };
 
 /** Runs the game in `host`: deep links (`?players=…`, `?room=…`) skip the start menu. */
 export function startApp(host: HTMLElement): void {
@@ -127,7 +135,12 @@ export function startApp(host: HTMLElement): void {
         void onlineSession(conn, heading, onLost).then((session) => {
           if (!live()) return session.dispose();
           handedOff = true;
-          go({ kind: "racing", level, session: Promise.resolve(session), conn });
+          go({
+            kind: "racing",
+            level,
+            session: Promise.resolve(session),
+            online: { conn, invite: state.invite },
+          });
         });
         return;
       }
@@ -157,11 +170,13 @@ export function startApp(host: HTMLElement): void {
       clearTimeout(blockedTimer);
       hideBlocked?.();
     });
+    const online = state.online;
     own(listenKeyboard(window));
     own(
       listen("keydown", (e) => {
         if (e.code === "Escape") toMenu();
         else if (e.code === "KeyR") restart();
+        else if (e.code === "KeyL" && online && isHost(online.conn)) online.conn.toLobby();
       }),
     );
     const touch = createTouchControls(host, heading, {
@@ -169,9 +184,22 @@ export function startApp(host: HTMLElement): void {
       onMenu: toMenu,
     });
     own(() => touch.dispose());
-    if (state.conn) {
-      own(showSpectating(host, state.conn));
-      own(showTeamPick(host, state.conn));
+    if (online) {
+      const { conn, invite } = online;
+      let handedOff = false;
+      own(() => {
+        if (!handedOff) conn.close();
+      });
+      // The host sent the room back to its lobby: same connection, same seat, no reload.
+      own(
+        conn.onRoster((roster) => {
+          if (roster.started) return;
+          handedOff = true;
+          go({ kind: "room", conn, invite });
+        }),
+      );
+      own(showSpectating(host, conn));
+      own(showTeamPick(host, conn));
     }
 
     const ready = await state.session;
@@ -188,6 +216,7 @@ export function startApp(host: HTMLElement): void {
       audio,
       heading,
       setHeading: (h) => (cameraHeading = h),
+      lobby: online && { can: () => isHost(online.conn), go: () => online.conn.toLobby() },
     });
     if (!live()) return view.dispose();
     own(() => view.dispose());
@@ -203,6 +232,9 @@ export function startApp(host: HTMLElement): void {
   const deepLink = launchFromUrl(location.search);
   go(deepLink ? launched(deepLink) : { kind: "menu" });
 }
+
+/** Only the host can send the room back to its lobby. */
+const isHost = (conn: Connection) => conn.roster().host === conn.seat;
 
 /** Adds a window listener and returns the function that removes it. */
 function listen<K extends keyof WindowEventMap>(

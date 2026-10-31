@@ -19,6 +19,7 @@ const handlers = RaftRpcs.toLayer(
       SendInput: ({ code, token, input }) => inRoom(code, (r) => r.sendInput(token, input)),
       Start: ({ code, token }) => inRoom(code, (r) => r.start(token)),
       Restart: ({ code, token }) => inRoom(code, (r) => r.restart(token)),
+      ToLobby: ({ code, token }) => inRoom(code, (r) => r.toLobby(token)),
       SetLook: ({ code, token, look }) => inRoom(code, (r) => r.setLook(token, look)),
       SetTeam: ({ code, token, team }) => inRoom(code, (r) => r.setTeam(token, team)),
       SetMode: ({ code, token, mode }) => inRoom(code, (r) => r.setMode(token, mode)),

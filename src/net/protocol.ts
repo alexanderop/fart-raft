@@ -213,7 +213,7 @@ export const startBlocker = (roster: Pick<Roster, "mode" | "seats">): string | n
     : null;
 
 export const ServerMsg = Schema.TaggedUnion({
-  /** `token` proves the seat: SendInput, Start and Restart carry it. */
+  /** `token` proves the seat: every RPC but CreateRoom and Join carries it. */
   Welcome: { seat: SeatIndex, token: Schema.String },
   Roster: { roster: Roster },
   /** Only once the race has started. */
@@ -247,6 +247,8 @@ export const RaftRpcs = RpcGroup.make(
   Rpc.make("Start", { payload: Seated }),
   /** Any seated player: a new race whose crew is everyone seated now. */
   Rpc.make("Restart", { payload: Seated }),
+  /** Host only: end the race (under way or finished) and put the room back in its lobby. */
+  Rpc.make("ToLobby", { payload: Seated }),
   /** Any seated player: change their look, in the lobby or mid-race. */
   Rpc.make("SetLook", { payload: { ...Seated, look: Look } }),
   /**

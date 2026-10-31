@@ -80,6 +80,8 @@ export interface Room {
   readonly start: (token: string) => Effect.Effect<void>;
   /** Any seated human: a new race with everyone seated now, spectators included. */
   readonly restart: (token: string) => Effect.Effect<void>;
+  /** Only the host's token ends the race and returns the room to its lobby; anything else is ignored. */
+  readonly toLobby: (token: string) => Effect.Effect<void>;
   /** A seated human's new look: on their seat, and on their rider if they are racing. */
   readonly setLook: (token: string, look: Look) => Effect.Effect<void>;
   /** A seated human's team for the next race; ignored when that team is full. */
@@ -330,6 +332,21 @@ export const makeRoom = (
       yield* publishRoster;
     });
 
+    const toLobby = Effect.fn("Room.toLobby")(function* (token: string) {
+      const table = yield* Ref.get(seats);
+      const host = hostOf(table);
+      if (host === null || seatOf(table, token) !== host) return;
+      // One modify: two ToLobbys each see the race once, so none is freed twice.
+      const old = yield* Ref.getAndSet(race, undefined);
+      if (!old) return;
+      old.free();
+      // Held keys from the race must not steer the next one before its player sends fresh input.
+      yield* Ref.update(seats, (t) =>
+        t.map((s) => (s.kind === "human" ? { ...s, input: IDLE_INPUT } : s)),
+      );
+      yield* publishRoster;
+    });
+
     const setLook = Effect.fn("Room.setLook")(function* (token: string, look: Look) {
       const changed = yield* Ref.modify(seats, (table) => {
         const seat = seatOf(table, token);
@@ -365,5 +382,5 @@ export const makeRoom = (
       Effect.map((table) => table.filter((s) => s.kind === "human").length),
     );
 
-    return { code, join, sendInput, start, restart, setLook, setTeam, setMode, humans };
+    return { code, join, sendInput, start, restart, toLobby, setLook, setTeam, setMode, humans };
   });

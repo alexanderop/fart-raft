@@ -45,6 +45,8 @@ export type Connection = {
   /** Host only: leave the lobby and start the race. */
   start(): void;
   restart(): void;
+  /** Host only: end the race and send everyone back to the room's lobby. */
+  toLobby(): void;
   /** Changes this player's look; everyone sees it on the next roster. */
   setLook(look: Look): void;
   /** Moves this player to `team` for the next race; ignored when that team is full. */
@@ -121,6 +123,7 @@ export async function connect(
   let welcome: Welcome | undefined;
   let roster: Roster | undefined;
   let closed = false;
+  let last: SeatInput | undefined;
 
   let seated!: () => void;
   let refused!: (error: Error) => void;
@@ -146,6 +149,8 @@ export async function connect(
             Roster: (r) => {
               if (closed) return;
               roster = r.roster;
+              // The server idles every input when a race ends, so the next input must be sent again.
+              if (!r.roster.started) last = undefined;
               if (welcome) seated();
               for (const handler of rosterHandlers) handler(r.roster);
             },
@@ -176,7 +181,6 @@ export async function connect(
   const me = welcome!;
   const seat = { code, token: me.token };
 
-  let last: SeatInput | undefined;
   return {
     seat: me.seat,
     code,
@@ -195,6 +199,10 @@ export async function connect(
     },
     restart() {
       runtime.runFork(client.Restart(seat).pipe(Effect.ignore));
+    },
+    toLobby() {
+      if (closed) return;
+      runtime.runFork(client.ToLobby(seat).pipe(Effect.ignore));
     },
     setLook(next) {
       if (closed) return;

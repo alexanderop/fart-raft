@@ -421,8 +421,8 @@ const teamButton = (roster: Roster, team: Team, mine: Team, label: string) => {
 /**
  * During a team race: pick the team you ride in the next race, from any seat. A spectator (joined
  * mid-race) sees both teams; a rider gets one small button for the other team. A full team is
- * disabled (`MAX_TEAM`). The host also gets Ghost / Bump buttons, since a started room has no
- * lobby screen to switch the mode in. A spectator's camera follows its team's raft, so picking one also moves
+ * disabled (`MAX_TEAM`). The host also gets Back to lobby, where the mode, the course's crew and
+ * the teams are set before the next Start. A spectator's camera follows its team's raft, so picking one also moves
  * the view there at once. The returned function removes the strip.
  */
 export function showTeamPick(host: HTMLElement, conn: Connection): () => void {
@@ -437,22 +437,17 @@ export function showTeamPick(host: HTMLElement, conn: Connection): () => void {
   el.addEventListener("click", (e) => {
     const target = e.target instanceof Element ? e.target : null;
     const pick = target?.closest<HTMLButtonElement>("[data-team]");
-    const mode = target?.closest<HTMLButtonElement>("[data-mode]");
+    const lobby = target?.closest<HTMLButtonElement>("[data-lobby]");
     if (pick) conn.setTeam(pick.dataset.team === "1" ? 1 : 0);
-    else if (mode) conn.setMode(mode.dataset.mode === "bump" ? "bump" : "ghost");
+    else if (lobby) conn.toLobby();
     else return;
-    (pick ?? mode)?.blur();
+    (pick ?? lobby)?.blur();
   });
-  /** The host also picks how the next race is raced, since a started room has no lobby screen. */
-  const modeButtons = (roster: Roster) =>
-    roster.host !== conn.seat
-      ? ""
-      : (["ghost", "bump"] as const)
-          .map(
-            (m) =>
-              `<button type="button" class="team-pick-btn team-pick-mode" data-mode="${m}" ${roster.mode === m ? "disabled" : ""}>${roster.mode === m ? "✓ " : ""}${m === "bump" ? "💥 Bump" : "👻 Ghost"}</button>`,
-          )
-          .join("");
+  /** Only the host can end the race; the lobby is where the mode is picked. */
+  const lobbyButton = (roster: Roster) =>
+    roster.host === conn.seat
+      ? `<button type="button" class="team-pick-btn team-pick-lobby" data-lobby>Back to lobby</button>`
+      : "";
   const render = (roster: Roster) => {
     const mine = roster.seats[conn.seat]?.team;
     el.hidden = !(roster.started && isTeamMode(roster.mode) && mine !== undefined);
@@ -474,7 +469,7 @@ export function showTeamPick(host: HTMLElement, conn: Connection): () => void {
         full ? `${teamName(other)} is full` : `Next race: ${teamName(other)} ⇄`,
       );
     }
-    el.insertAdjacentHTML("beforeend", modeButtons(roster));
+    el.insertAdjacentHTML("beforeend", lobbyButton(roster));
   };
   render(conn.roster());
   const stop = conn.onRoster(render);

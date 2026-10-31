@@ -362,6 +362,52 @@ describe("given a race in progress", () => {
       ));
   });
 
+  describe("when the host sends the room back to the lobby", () => {
+    it("should stop the frames, then race fresh with everyone seated from the next Start", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const host = yield* lease(room);
+          const guest = yield* lease(room, "Bo");
+          yield* room.start(host.welcome.token);
+          yield* room.sendInput(guest.welcome.token, FART);
+          yield* play(1);
+          yield* drain(guest.inbox);
+
+          yield* room.toLobby(host.welcome.token);
+          const { roster } = yield* drain(guest.inbox);
+          expect(roster?.started).toBe(false);
+          expect(roster?.crew).toEqual([]);
+          yield* play(1);
+          expect(yield* framesIn(guest.inbox)).toEqual([]);
+
+          yield* lease(room, "Cy");
+          yield* room.start(host.welcome.token);
+          yield* play(1);
+          const next = yield* drain(guest.inbox);
+          expect(next.frames[0]!.snapshot.tick).toBe(3);
+          expect(next.roster?.crew.map((c) => c.name)).toEqual(["Ann", "Bo", "Cy"]);
+          expect(fartsIn(next.frames)).toHaveLength(0);
+        }),
+      ));
+
+    it("should ignore a guest, and a room that is already in its lobby", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const host = yield* lease(room);
+          const guest = yield* lease(room, "Bo");
+          yield* room.toLobby(host.welcome.token);
+          yield* room.start(host.welcome.token);
+          yield* play(1);
+          yield* drain(guest.inbox);
+          yield* room.toLobby(guest.welcome.token);
+          yield* play(1);
+          expect((yield* drain(guest.inbox)).frames.length).toBeGreaterThan(10);
+        }),
+      ));
+  });
+
   describe("when someone joins mid-race", () => {
     it("should get frames right away but only watch", () =>
       run(

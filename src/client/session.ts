@@ -67,7 +67,7 @@ export type Session = {
   restart(): string | null;
   /** `loopAlpha` is how far the client loop is into its next tick, only a local sim has use for it. */
   frame(loopAlpha: number): FrameView;
-  /** Frees what the session holds: the local sim's Rapier world, or the online connection. */
+  /** Frees what the session holds: the local sim's Rapier world, or the online roster listener. The app owns the connection. */
   dispose(): void;
 };
 
@@ -232,6 +232,8 @@ export async function onlineSession(
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
     conn.onFrame((frame) => {
+      // A frame still in flight from a race that ended must not look like a new one starting.
+      if (!roster.started) return;
       const raft = followedRaft(roster, conn.seat, frame.snapshot.crews.length);
       const view = viewOf(frame.snapshot, raft);
       if (state) {
@@ -278,7 +280,6 @@ export async function onlineSession(
     },
     dispose() {
       stopRoster();
-      conn.close();
     },
   };
 }

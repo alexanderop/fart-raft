@@ -137,10 +137,12 @@ export type HudOptions = {
   seatLabels: readonly string[];
   camera: PerspectiveCamera;
   progress: ProgressTrack;
+  /** Online: `can()` is true for the host, who gets a Back to lobby button on the finish card. */
+  lobby?: { can(): boolean; go(): void };
 };
 
 export function createHud(host: HTMLElement, opts: HudOptions) {
-  const { seatLabels, camera, progress } = opts;
+  const { seatLabels, camera, progress, lobby } = opts;
   const { markers } = progress;
   host.insertAdjacentHTML(
     "beforeend",
@@ -162,6 +164,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         <div class="finish-time" data-finish-time></div>
         <div class="finish-deaths" data-finish-deaths></div>
         <div class="finish-result" data-finish-result></div>
+        <button type="button" class="finish-lobby" data-lobby hidden>Back to lobby${matchMedia("(pointer: coarse)").matches ? "" : " (L)"}</button>
         <div class="finish-hint">${matchMedia("(pointer: coarse)").matches ? "↻ to restart · ☰ for menu" : "R to restart · Esc for menu"}</div>
       </div>
       <div class="hud-hurt" data-hurt></div>
@@ -186,6 +189,15 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const finishTitle = $(".finish-title");
   const finishResult = $("[data-finish-result]");
   const resultStrip = $("[data-result]");
+  const lobbyButton = root.querySelector<HTMLButtonElement>("[data-lobby]")!;
+  // Space and Enter belong to the fart, not to a focused button.
+  lobbyButton.addEventListener("keydown", (e) => {
+    if (e.code !== "Escape") e.stopPropagation();
+  });
+  lobbyButton.addEventListener("click", () => {
+    lobbyButton.blur();
+    lobby?.go();
+  });
   const rivalLayer = $("[data-rivals]");
   const track = $("[data-track]");
   /** Progress-bar markers and floating "Rival" tags of the other rafts, by raft index. */
@@ -396,6 +408,7 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
       }
 
       const done = phase.kind === "finished";
+      lobbyButton.hidden = !lobby?.can();
       if (done && !finish.classList.contains("on")) {
         finishTime.textContent = formatTime(phase.timeMs);
         finishDeaths.textContent =

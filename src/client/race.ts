@@ -11,7 +11,7 @@ import { gateLayout } from "./render/gates.ts";
 import { createScene } from "./render/scene.ts";
 import type { RivalFrame } from "./render/rivals.ts";
 import { crewsOf, type FrameView, type Session } from "./session.ts";
-import { createHud, progressTrack } from "./ui/hud.ts";
+import { createHud, progressTrack, type HudOptions } from "./ui/hud.ts";
 import { createVolumeButton } from "./ui/volume.ts";
 import { lookColor, type Look } from "../look.ts";
 import type { View } from "../sim/types.ts";
@@ -60,11 +60,13 @@ export type RaceOptions = {
   /** Reads the camera heading last drawn; the race reports each new one through `setHeading`. */
   heading: () => number;
   setHeading: (heading: number) => void;
+  /** Online: the host's way back to the room's lobby, offered on the finish card. */
+  lobby?: HudOptions["lobby"];
 };
 
 /** The race scene: renderer, fx, HUD and audio, drawn from the session once per frame. */
 export async function createRace(opts: RaceOptions): Promise<Race> {
-  const { host, level, session, volume, audio, heading, setHeading } = opts;
+  const { host, level, session, volume, audio, heading, setHeading, lobby } = opts;
   const view = await createScene(host, level);
   const particles = createParticles(view.scene);
   const wake = createWake(view.scene);
@@ -80,6 +82,7 @@ export async function createRace(opts: RaceOptions): Promise<Race> {
     seatLabels: session.seatLabels(),
     camera: view.camera,
     progress: progressTrack(level),
+    lobby,
   });
   const volumeButton = createVolumeButton(host, volume);
 
