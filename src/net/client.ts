@@ -226,6 +226,13 @@ export async function connect(
   };
 }
 
+/**
+ * Where a link is: `joining` until the first roster after `Welcome`, `seated` while the Join
+ * stream runs, `lost` once it ended on its own (the seat is no longer ours to give up), `closed`
+ * once we hung up. joining → seated → lost → closed; joining → lost; any → closed.
+ */
+type LinkPhase = "joining" | "seated" | "lost" | "closed";
+
 /** One Join stream and the runtime it runs on: a Connection runs over one at a time. */
 type Link = Omit<Connection, "rejoin" | "close"> & {
   readonly token: string;
@@ -248,9 +255,7 @@ async function openLink(
   const backlog: Frame[] = [];
   let welcome: Welcome | undefined;
   let roster: Roster | undefined;
-  let closed = false;
-  /** The Join stream has ended: the seat is no longer ours to give up. */
-  let lost = false;
+  let phase: LinkPhase = "joining";
   let last: SeatInput | undefined;
 
   let seated!: () => void;
@@ -260,8 +265,8 @@ async function openLink(
     refused = reject;
   });
   const lose = (error: JoinError) => {
-    lost = true;
-    if (closed) return;
+    if (phase === "lost" || phase === "closed") return;
+    phase = "lost";
     refused(error);
     closeHandler?.(error.message);
   };
@@ -276,15 +281,18 @@ async function openLink(
               welcome = w;
             },
             Roster: (r) => {
-              if (closed) return;
+              if (phase === "closed") return;
               roster = r.roster;
               // The server idles every input when a race ends, so the next input must be sent again.
               if (!r.roster.started) last = undefined;
-              if (welcome) seated();
+              if (welcome && phase === "joining") {
+                phase = "seated";
+                seated();
+              }
               rosterHandler?.(r.roster);
             },
             Frame: (frame) => {
-              if (closed) return;
+              if (phase === "closed") return;
               if (frameHandler) frameHandler(frame);
               else backlog.push(frame);
             },
@@ -309,6 +317,10 @@ async function openLink(
   }
   const me = welcome!;
   const seat = { code, token: me.token };
+  /** Only a seated link talks to the server: a lost seat is away, a closed one gone. */
+  const rpc = (call: Effect.Effect<unknown, unknown>) => {
+    if (phase === "seated") runtime.runFork(call.pipe(Effect.ignore));
+  };
 
   return {
     seat: me.seat,
@@ -320,34 +332,16 @@ async function openLink(
       return () => (rosterHandler = undefined);
     },
     send(input) {
-      if (closed || (last && sameInput(last, input))) return;
+      if (phase !== "seated" || (last && sameInput(last, input))) return;
       last = input;
-      runtime.runFork(client.SendInput({ ...seat, input }, { discard: true }).pipe(Effect.ignore));
+      rpc(client.SendInput({ ...seat, input }, { discard: true }));
     },
-    start() {
-      if (closed) return;
-      runtime.runFork(client.Start(seat).pipe(Effect.ignore));
-    },
-    restart() {
-      if (closed) return;
-      runtime.runFork(client.Restart(seat).pipe(Effect.ignore));
-    },
-    toLobby() {
-      if (closed) return;
-      runtime.runFork(client.ToLobby(seat).pipe(Effect.ignore));
-    },
-    setLook(next) {
-      if (closed) return;
-      runtime.runFork(client.SetLook({ ...seat, look: next }).pipe(Effect.ignore));
-    },
-    setTeam(team) {
-      if (closed) return;
-      runtime.runFork(client.SetTeam({ ...seat, team }).pipe(Effect.ignore));
-    },
-    setMode(next) {
-      if (closed) return;
-      runtime.runFork(client.SetMode({ ...seat, mode: next }).pipe(Effect.ignore));
-    },
+    start: () => rpc(client.Start(seat)),
+    restart: () => rpc(client.Restart(seat)),
+    toLobby: () => rpc(client.ToLobby(seat)),
+    setLook: (next) => rpc(client.SetLook({ ...seat, look: next })),
+    setTeam: (team) => rpc(client.SetTeam({ ...seat, team })),
+    setMode: (next) => rpc(client.SetMode({ ...seat, mode: next })),
     onFrame(handler) {
       frameHandler = handler;
       for (const frame of backlog.splice(0)) handler(frame);
@@ -356,12 +350,13 @@ async function openLink(
       closeHandler = handler;
     },
     close({ leave }) {
-      if (closed) return;
-      closed = true;
+      if (phase === "closed") return;
+      const live = phase === "seated";
+      phase = "closed";
       frameHandler = closeHandler = rosterHandler = undefined;
       backlog.length = 0;
       const bye =
-        leave && !lost
+        leave && live
           ? client.Leave(seat).pipe(Effect.timeout(LEAVE_TIMEOUT_MS), Effect.ignore)
           : Effect.void;
       void runtime.runPromise(bye).finally(() => runtime.dispose());
