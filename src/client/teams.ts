@@ -1,4 +1,4 @@
-import { TEAMS } from "../net/protocol.ts";
+import { TEAMS, type Roster } from "../net/protocol.ts";
 import { COSTUMES, defaultLook, LOOK_COLORS, type Look } from "../look.ts";
 
 /** Each team's look color (an index into LOOK_COLORS), by raft: Red, then Blue. */
@@ -21,3 +21,11 @@ export const botCrewLook = (raft: number, seat: number): Look => ({
   outfit: PIRATE.outfit,
   gadget: PIRATE.gadget,
 });
+
+/** The floating tag over raft `raft`: "Rival", plus how many of its crew are reconnecting. */
+export function rivalTag(roster: Pick<Roster, "crew" | "seats">, raft: number): string {
+  const away = roster.crew.filter(
+    (c) => c.raft === raft && c.seat !== null && roster.seats[c.seat]?.away,
+  ).length;
+  return away === 0 ? "Rival" : `Rival · ${away} reconnecting…`;
+}

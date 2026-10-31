@@ -14,6 +14,8 @@ const PUFF_GAP_TICKS = 6;
 const TAG_HEIGHT = 2.9;
 /** The rival raft's tag floats above its riders' name height. */
 const RIVAL_TAG_HEIGHT = 3.6;
+/** Screen-edge margin (px) a rival tag never crosses. */
+const TAG_GUTTER = 8;
 
 const CLOCK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M12 7v5.5l3.5 2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PUFF_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.4 8.9a4.8 4.8 0 0 1 .1 9.6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>`;
@@ -95,6 +97,8 @@ export type TeamHud = {
   crews: readonly Crew[];
   poses: readonly Pose[];
   tick: number;
+  /** The floating tag text over each raft, by raft index (missing: "Rival"). */
+  tags: readonly string[];
 };
 
 const escapeHtml = (s: string) =>
@@ -293,15 +297,20 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
       const tag = rivalEl(rivalTags, raft, () => {
         const el = document.createElement("div");
         el.className = "rival-tag";
-        el.textContent = "Rival";
         rivalLayer.append(el);
         return el;
       });
+      const text = t.tags[raft] ?? "Rival";
+      if (tag.textContent !== text) tag.textContent = text;
       const pose = t.poses[raft] ?? crew.raft;
       const at = onScreen(pose.x, pose.y, RIVAL_TAG_HEIGHT);
       tag.style.visibility = at ? "visible" : "hidden";
-      if (at)
-        tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      if (at) {
+        // Centered over the raft, but kept whole on screen when the raft is near an edge.
+        const half = tag.offsetWidth / 2;
+        const x = Math.min(Math.max(at.x, TAG_GUTTER + half), innerWidth - TAG_GUTTER - half);
+        tag.style.transform = `translate(${x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      }
     });
 
     const result = teamResult(t.crews, t.tick);

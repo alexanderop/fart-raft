@@ -1622,7 +1622,17 @@ button {
   -webkit-text-stroke: 3px var(--outline);
   paint-order: stroke fill;
   white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
   will-change: transform;
+}
+
+@media (max-width: 480px) {
+  .rival-tag {
+    font-size: 12px;
+    letter-spacing: 0.03em;
+  }
 }
 
 .hud-result {

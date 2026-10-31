@@ -143,7 +143,11 @@ export async function createRace(opts: RaceOptions): Promise<Race> {
         const r = rivals.find((x) => x.raft === raft);
         return r ? lerpPose(r.prev.raft, r.curr.raft, alpha) : raft === f.raft ? f.pose : crew.raft;
       });
-      hud.drawTeams(crews.length < 2 ? null : { raft: f.raft, crews, poses, tick: curr.tick });
+      hud.drawTeams(
+        crews.length < 2
+          ? null
+          : { raft: f.raft, crews, poses, tick: curr.tick, tags: session.rivalTags() },
+      );
     },
     dispose() {
       removeEventListener("keydown", onKey);

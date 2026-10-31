@@ -19,7 +19,7 @@ import { createSim, snapshot, step } from "../sim/sim.ts";
 import type { Crew, LevelData, SimEvent, View } from "../sim/types.ts";
 import { viewOf, viewsOf } from "../sim/view.ts";
 import { crewSize, type GameConfig, type LocalPlayer } from "./ui/menu.ts";
-import { botCrewLook } from "./teams.ts";
+import { botCrewLook, rivalTag } from "./teams.ts";
 import { defaultLook, type Look } from "../look.ts";
 
 /**
@@ -59,6 +59,8 @@ function sortEvents(
 export type Session = {
   /** One name tag per rider. */
   seatLabels(): readonly string[];
+  /** The floating tag over each other raft, by raft index (missing: plain "Rival"). */
+  rivalTags(): readonly string[];
   /** One look per rider on every raft, by raft index: animal, color and costume. */
   looks(): readonly (readonly Look[])[];
   /** Once per fixed client tick (60 Hz). */
@@ -151,6 +153,7 @@ export async function localSession(
 
   return {
     seatLabels: driver.labels,
+    rivalTags: () => [],
     looks: () => looks,
     tick() {
       driver.update();
@@ -240,8 +243,13 @@ export async function onlineSession(conn: Connection, heading: Heading): Promise
       const raft = followedRaft(roster, conn.seat, frame.snapshot.crews.length);
       const view = viewOf(frame.snapshot, raft);
       if (state) {
-        // A restart with a different crew or raft is a new raft: cut instead of blending riders across.
-        const cut = raft !== state.raft || view.riders.length !== state.curr.riders.length;
+        // A restart, a different crew or raft, or frames missed while rejoining: cut, don't blend across.
+        const ticks = view.tick - state.curr.tick;
+        const cut =
+          raft !== state.raft ||
+          view.riders.length !== state.curr.riders.length ||
+          ticks < 0 ||
+          ticks > 2 * FRAME_TICKS;
         state.prev = cut ? view : state.curr;
         state.curr = view;
         state.raft = raft;
@@ -257,6 +265,8 @@ export async function onlineSession(conn: Connection, heading: Heading): Promise
 
   return {
     seatLabels: () => labelsOf(received.raft),
+    rivalTags: () =>
+      Array.from({ length: received.curr.rivals.length + 1 }, (_, raft) => rivalTag(roster, raft)),
     looks: () => looks,
     tick() {
       gamepads.poll();

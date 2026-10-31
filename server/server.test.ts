@@ -196,33 +196,75 @@ describe("given the server listening on a free port", () => {
   });
 
   describe("when a browser client rejoins its seat", () => {
-    it("should get the same seat back on a new connection and end the old one", () =>
+    it("should take the same seat back on the same Connection, which leaves it on close", () =>
       withServer((url) =>
         Effect.promise(async () => {
           const code = await createRoom(url, "pond", "chill");
           const host = await connect(url, code, "Ann", look);
           const guest = await connect(url, code, "Bo", look);
-          const ended = new Promise<string>((resolve) => guest.onClose(resolve));
-          const back = await guest.rejoin();
-          expect(back.seat).toBe(1);
-          expect(await ended).toBe("The server closed the connection");
-          expect(back.roster().seats).toEqual([
+          const rosters: Roster[] = [];
+          guest.onRoster((r) => rosters.push(r));
+          expect(await guest.rejoin()).toEqual({ kind: "back" });
+          expect(guest.seat).toBe(1);
+          expect(guest.roster().seats).toEqual([
             player("Ann"),
             player("Bo", 1),
             ...open(MAX_CREW - 2),
           ]);
+          expect(rosters.at(-1)).toBe(guest.roster());
+
+          const left = new Promise<Roster>((resolve) =>
+            host.onRoster((r) => r.seats[1] === null && resolve(r)),
+          );
           guest.close();
-          back.close();
+          expect((await left).seats[0]).toEqual(player("Ann"));
+          host.close();
+        }),
+      ));
+  });
+
+  describe("when a browser client closes while its rejoin is in flight", () => {
+    it("should give the new seat up instead of taking it", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          const code = await createRoom(url, "pond", "chill");
+          const host = await connect(url, code, "Ann", look);
+          const guest = await connect(url, code, "Bo", look);
+          const left = new Promise<Roster>((resolve) =>
+            host.onRoster((r) => r.seats[1] === null && resolve(r)),
+          );
+          const rejoining = guest.rejoin();
+          guest.close();
+          expect(await rejoining).toEqual({ kind: "closed" });
+          expect((await left).seats[0]).toEqual(player("Ann"));
           host.close();
         }),
       ));
   });
 
   describe("when the browser client joins a missing room", () => {
-    it("should reject with a readable reason", () =>
+    it("should reject with a readable reason and the kind gone", () =>
       withServer((url) =>
         Effect.promise(async () => {
-          await expect(connect(url, "QQQQ", "Ann", look)).rejects.toThrow("No game with code QQQQ");
+          const joining = connect(url, "QQQQ", "Ann", look);
+          await expect(joining).rejects.toThrow("No game with code QQQQ");
+          await expect(joining).rejects.toMatchObject({ failure: "gone" });
+        }),
+      ));
+  });
+
+  describe("when the browser client joins a full room", () => {
+    it("should reject with the kind full", () =>
+      withServer((url) =>
+        Effect.promise(async () => {
+          const code = await createRoom(url, "pond", "chill");
+          const seated = await Promise.all(
+            Array.from({ length: MAX_CREW }, (_, i) => connect(url, code, `P${i}`, look)),
+          );
+          await expect(connect(url, code, "Late", look)).rejects.toMatchObject({
+            failure: "full",
+          });
+          for (const conn of seated) conn.close();
         }),
       ));
   });
