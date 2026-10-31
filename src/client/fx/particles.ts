@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { MAX_CREW } from "../../sim/constants.ts";
 import type { SimEvent } from "../../sim/types.ts";
 import { applyPose } from "../render/coords.ts";
 import { detectQuality } from "../render/quality.ts";
@@ -114,7 +115,8 @@ export function createParticles(scene: THREE.Scene) {
   }));
   let next = 0;
   let nextBubble = 0;
-  const cooldown = [0, 0, 0, 0];
+  /** Per rider, by `raft * MAX_CREW + seat`: rival rafts' riders puff on their own clocks. */
+  const cooldown: number[] = [];
   const dummy = new THREE.Object3D();
 
   const spawn = (
@@ -146,8 +148,10 @@ export function createParticles(scene: THREE.Scene) {
 
   return {
     onEvent(e: SimEvent) {
-      if (e.type !== "fart" || (cooldown[e.seat] ?? 0) > 0) return;
-      cooldown[e.seat] = PUFF_EVERY;
+      if (e.type !== "fart") return;
+      const rider = e.raft * MAX_CREW + e.seat;
+      if ((cooldown[rider] ?? 0) > 0) return;
+      cooldown[rider] = PUFF_EVERY;
       spawn(e, rand(0.34, 0.42), rand(0.85, 1.1) * SPEED, 0.35, SWELL * rand(0.8, 1.2));
       if (Math.random() < 0.4) spawn(e, rand(0.2, 0.26), SPEED * 0.55, 0.3, SWELL * 0.6);
       if (Math.random() < 0.12) {

@@ -10,6 +10,7 @@ import { createChaseCamera } from "./chaseCamera.ts";
 import { createHazardView, type HazardView } from "./hazards.ts";
 import { createRaftMotion } from "./raftMotion.ts";
 import { createRiderAnimator } from "./riders.ts";
+import { createRivals, type RivalFrame } from "./rivals.ts";
 import { buildTerrain } from "./terrain.ts";
 import { createZoneMarks } from "./zones.ts";
 import { lookColor, type Look } from "../../look.ts";
@@ -19,9 +20,18 @@ export type SceneView = {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  /** Feed every drained SimEvent here; animation reacts to events and snapshots only. */
+  /** Feed every drained SimEvent of our raft here; animation reacts to events and snapshots only. */
   onEvent(e: SimEvent): void;
-  draw(prev: View, curr: View, alpha: number, shake: THREE.Vector3): void;
+  /** Another raft's event (team race): only that raft's hull and riders react. */
+  onRivalEvent(e: SimEvent): void;
+  /** Our raft from `prev`/`curr`, the camera behind it, and each rival raft. */
+  draw(
+    prev: View,
+    curr: View,
+    alpha: number,
+    shake: THREE.Vector3,
+    rivals: readonly RivalFrame[],
+  ): void;
   /** One look per rider (animal, color, costume); cheap to call every frame. */
   setLooks(looks: readonly Look[]): void;
   /** Frees the GPU side (geometries, materials, textures, the WebGL context) and removes the canvas. */
@@ -123,6 +133,7 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
   };
 
   const riders = createRiderAnimator(raft, level);
+  const rivals = createRivals(scene, kit, level);
   const motion = createRaftMotion(raft);
   const chase = createChaseCamera(level);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 700);
@@ -164,7 +175,10 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
       terrain.onEvent(e);
       boosts.onEvent(e);
     },
-    draw(prev, curr, alpha, shake) {
+    onRivalEvent(e) {
+      rivals.onEvent(e, performance.now() / 1000);
+    },
+    draw(prev, curr, alpha, shake, rivalFrames) {
       const now = performance.now() / 1000;
       const lowered = governor.frame((now - lastDraw) * 1000);
       if (lowered !== undefined) {
@@ -177,6 +191,7 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
       applyPose(raft, pose);
       motion.update(dt, now, prev, curr, pose);
       riders.update(dt, now, prev, curr, alpha, pose);
+      rivals.update(dt, now, rivalFrames, alpha);
       // The camera is where it was last frame: close enough to tell what hides the raft.
       const eye = { camera: camera.position, raft: pose };
       // Hazard time between the two snapshots: online they are FRAME_TICKS apart, not one.

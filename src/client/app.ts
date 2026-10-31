@@ -142,15 +142,30 @@ export function startApp(host: HTMLElement): void {
     const { level } = state;
     cameraHeading = level.spawn.rot;
     let session: Session | undefined;
+    let hideBlocked: (() => void) | undefined;
+    let blockedTimer = 0;
+    /** Restarts, or briefly says why not (a team room with an empty team). */
+    const restart = () => {
+      const blocked = session?.restart() ?? null;
+      if (blocked === null) return;
+      hideBlocked?.();
+      clearTimeout(blockedTimer);
+      hideBlocked = showBanner(host, `Can't restart: ${blocked}`, "info");
+      blockedTimer = window.setTimeout(() => hideBlocked?.(), 2500);
+    };
+    own(() => {
+      clearTimeout(blockedTimer);
+      hideBlocked?.();
+    });
     own(listenKeyboard(window));
     own(
       listen("keydown", (e) => {
         if (e.code === "Escape") toMenu();
-        else if (e.code === "KeyR") session?.restart();
+        else if (e.code === "KeyR") restart();
       }),
     );
     const touch = createTouchControls(host, heading, {
-      onRestart: () => session?.restart(),
+      onRestart: restart,
       onMenu: toMenu,
     });
     own(() => touch.dispose());

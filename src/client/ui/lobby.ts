@@ -1,6 +1,6 @@
 import { connect, createRoom, type Connection } from "../../net/client.ts";
 import { showBanner } from "./banner.ts";
-import { difficultyPicker, MODE_LABELS } from "./difficulty.ts";
+import { difficultyPicker, DIFFICULTY_LABELS } from "./pickers.ts";
 import { lastDifficulty, loadPlayers, savePlayers } from "./menu.ts";
 import { openWardrobe } from "./wardrobe.ts";
 import { lookBadge, lookColor, type Look } from "../../look.ts";
@@ -197,7 +197,7 @@ export function showRoom(
 ): () => void {
   const { course: picked, difficulty } = conn.roster();
   const course = PICKABLE.find((c) => c.course === picked)?.label ?? "";
-  const mode = MODE_LABELS[difficulty].label;
+  const mode = DIFFICULTY_LABELS[difficulty].label;
   host.insertAdjacentHTML(
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="room-title">

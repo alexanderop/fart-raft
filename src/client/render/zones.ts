@@ -60,3 +60,20 @@ export function createZoneMarks(
   });
   return group;
 }
+
+/**
+ * A team race's rival raft marker: the whole ring band and deck in its team color, so the raft
+ * reads as Red or Blue from the chase camera. A child of the raft.
+ */
+export function createTeamRing(color: string): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "team-ring";
+  const tint = (opacity: number) =>
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  const deck = new THREE.Mesh(flat(new THREE.CircleGeometry(DECK_EDGE, 32)), tint(0.45));
+  deck.position.y = DECK_Y;
+  const band = new THREE.Mesh(flat(new THREE.RingGeometry(BAND_IN, BAND_OUT, 48)), tint(0.75));
+  band.position.y = WATER_Y;
+  group.add(deck, band);
+  return group;
+}

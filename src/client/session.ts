@@ -4,25 +4,51 @@ import { createSeatDriver } from "../input/seats.ts";
 import { mergeSources, readSeats } from "../input/sources.ts";
 import { touchSource } from "../input/touch.ts";
 import type { Connection } from "../net/client.ts";
-import { FRAME_TICKS, placeOf, type Roster } from "../net/protocol.ts";
-import { crewZones, STEP } from "../sim/constants.ts";
+import { botSource } from "../input/bot.ts";
+import {
+  contactOf,
+  FRAME_TICKS,
+  isTeamMode,
+  placeOf,
+  startBlocker,
+  type Roster,
+} from "../net/protocol.ts";
+import { crewZones, MAX_LOCAL, STEP } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
-import type { LevelData, SimEvent, Snapshot, View } from "../sim/types.ts";
+import type { Crew, LevelData, SimEvent, View } from "../sim/types.ts";
 import { viewOf } from "../sim/view.ts";
 import { crewSize, type GameConfig, type LocalPlayer } from "./ui/menu.ts";
+import { botCrewLook } from "./teams.ts";
 import { defaultLook, type Look } from "../look.ts";
 
-/** What the renderer draws this frame: two snapshots to blend between, and what happened since the last frame. */
-export type FrameView = { prev: View; curr: View; alpha: number; events: SimEvent[] };
+/**
+ * What the renderer draws this frame: two views of the raft we follow to blend between, and what
+ * happened since the last frame. `curr.rivals` holds every other raft, in raft order without ours.
+ */
+export type FrameView = {
+  prev: View;
+  curr: View;
+  alpha: number;
+  /** The raft `prev` and `curr` follow: an index into `Snapshot.crews` (co-op: always 0). */
+  raft: number;
+  /** Our raft's events and the race-wide `go`: felt (HUD, audio, shake, rumble). */
+  events: SimEvent[];
+  /** Every other raft's events: only seen (fart puffs, the rival's riders), never felt. */
+  rivalEvents: SimEvent[];
+};
 
-/** The raft this client rides: co-op has only raft 0. */
-const OURS = 0;
+/** Every raft's crew, by raft index: the inverse of `viewOf`. */
+export const crewsOf = (view: View, raft: number): Crew[] => view.rivals.toSpliced(raft, 0, view);
 
-/** The race-wide `go` and our raft's events: a rival's farts and hits are not ours to feel. */
-const oursOnly = (events: readonly SimEvent[]) =>
-  events.filter((e) => e.type === "go" || e.raft === OURS);
-
-const ourView = (snap: Snapshot): View => viewOf(snap, OURS);
+/** Splits a tick's events into raft `raft`'s (plus `go`) and everyone else's. */
+function sortEvents(
+  events: readonly SimEvent[],
+  raft: number,
+  ours: SimEvent[],
+  rivals: SimEvent[],
+) {
+  for (const e of events) (e.type === "go" || e.raft === raft ? ours : rivals).push(e);
+}
 
 /**
  * Where the game state comes from. A local session steps the sim in this tab, an online one
@@ -32,11 +58,12 @@ const ourView = (snap: Snapshot): View => viewOf(snap, OURS);
 export type Session = {
   /** One name tag per rider. */
   seatLabels(): readonly string[];
-  /** One look per rider: animal, color and costume. */
-  seatLooks(): readonly Look[];
+  /** One look per rider on every raft, by raft index: animal, color and costume. */
+  looks(): readonly (readonly Look[])[];
   /** Once per fixed client tick (60 Hz). */
   tick(): void;
-  restart(): void;
+  /** Starts a fresh race, or returns why it cannot (a team room with an empty team). */
+  restart(): string | null;
   /** `loopAlpha` is how far the client loop is into its next tick, only a local sim has use for it. */
   frame(loopAlpha: number): FrameView;
   /** Frees what the session holds: the local sim's Rapier world, or the online connection. */
@@ -65,7 +92,8 @@ function rumbleFor(
 
 /**
  * `physics` is `initPhysics()`, started early so Rapier loads while the menu is up. `players[i]`
- * names and dresses human seat `i`; bots ride in their seat's default look.
+ * names and dresses human seat `i`; bots ride in their seat's default look. A team race
+ * (`config.race` ghost or bump) adds raft 1: a full crew of bots racing ours, raft 0.
  */
 export async function localSession(
   level: LevelData,
@@ -76,14 +104,20 @@ export async function localSession(
 ): Promise<Session> {
   await physics;
   const crew = crewZones(crewSize(config));
-  const looks = crew.map((_, i) =>
-    i < config.humans ? (players[i]?.look ?? defaultLook(i)) : defaultLook(i),
-  );
+  const rivalCrew = crewZones(MAX_LOCAL);
+  const rafts = isTeamMode(config.race) ? [crew, rivalCrew] : [crew];
+  const looks = [
+    crew.map((_, i) => (i < config.humans ? (players[i]?.look ?? defaultLook(i)) : defaultLook(i))),
+    ...rafts.slice(1).map((zones, r) => zones.map((_, i) => botCrewLook(r + 1, i))),
+  ];
+  const options = { difficulty: config.difficulty, contact: contactOf(config.race) };
 
-  let sim = createSim(level, [crew], { difficulty: config.difficulty });
-  let prev = ourView(snapshot(sim));
+  let sim = createSim(level, rafts, options);
+  let snap = snapshot(sim);
+  let prev = viewOf(snap, 0);
   let curr = prev;
   let pending: SimEvent[] = [];
+  let pendingRivals: SimEvent[] = [];
   // Bots read the latest snapshot, the same data a server broadcasts.
   const driver = createSeatDriver(
     config.humans,
@@ -94,19 +128,30 @@ export async function localSession(
     gamepads,
     players.map((p) => p.name),
   );
+  /** The other rafts' crews: bots, each reading its own raft's view. */
+  const rivalBots = () =>
+    rafts
+      .slice(1)
+      .flatMap((zones, r) =>
+        zones.map((_, i) => botSource(i, zones, level, () => viewOf(snap, r + 1))),
+      );
+  let rivals = rivalBots();
   driver.update();
   let startWasDown = false;
 
   function restart() {
     sim.world.free();
-    sim = createSim(level, [crew], { difficulty: config.difficulty });
-    prev = curr = ourView(snapshot(sim));
+    sim = createSim(level, rafts, options);
+    snap = snapshot(sim);
+    prev = curr = viewOf(snap, 0);
     driver.reset();
+    rivals = rivalBots();
+    return null;
   }
 
   return {
     seatLabels: driver.labels,
-    seatLooks: () => looks,
+    looks: () => looks,
     tick() {
       driver.update();
       // Start on any seated pad restarts, like R.
@@ -117,15 +162,19 @@ export async function localSession(
       if (startDown && !startWasDown) restart();
       startWasDown = startDown;
       prev = curr;
-      pending.push(...oursOnly(step(sim, readSeats(driver.sources()))));
-      curr = ourView(snapshot(sim));
+      const inputs = [...readSeats(driver.sources()), ...readSeats(rivals)];
+      sortEvents(step(sim, inputs), 0, pending, pendingRivals);
+      snap = snapshot(sim);
+      curr = viewOf(snap, 0);
     },
     restart,
     frame(alpha) {
       const events = pending;
+      const rivalEvents = pendingRivals;
       pending = [];
+      pendingRivals = [];
       rumbleFor(gamepads, events, driver.padOf, driver.claimedPads);
-      return { prev, curr, alpha, events };
+      return { prev, curr, alpha, raft: 0, events, rivalEvents };
     },
     dispose() {
       sim.world.free();
@@ -133,7 +182,19 @@ export async function localSession(
   };
 }
 
-const looksOf = (roster: Roster) => roster.crew.map((c) => c.look);
+/** Each raft's riders' looks, by raft index. */
+const looksOf = (roster: Roster): Look[][] => {
+  const out: Look[][] = [];
+  for (const c of roster.crew) (out[c.raft] ??= []).push(c.look);
+  return Array.from(out, (looks) => looks ?? []);
+};
+
+/**
+ * The raft this seat's camera follows: the one it rides, else (spectating) its team's raft in a
+ * team race, else raft 0.
+ */
+const followed = (roster: Roster, seat: number, rafts: number): number =>
+  placeOf(roster, seat)?.raft ?? Math.min(roster.seats[seat]?.team ?? 0, rafts - 1);
 
 /** Wire frames come every FRAME_TICKS sim ticks, so a snapshot is blended in over that long. */
 const FRAME_MS = FRAME_TICKS * STEP * 1000;
@@ -141,8 +202,10 @@ const FRAME_MS = FRAME_TICKS * STEP * 1000;
 type Received = {
   prev: View;
   curr: View;
+  raft: number;
   at: number;
   events: SimEvent[];
+  rivalEvents: SimEvent[];
 };
 
 /**
@@ -161,47 +224,55 @@ export async function onlineSession(
     mergeSources(keyboardSource(WASD_OR_ARROWS, heading), touchSource(heading)),
     gamepadSource(gamepads, () => gamepads.connected()[0], heading),
   );
-  // The race's crew can differ from the lobby seats: label riders, and find ours, by `crew`.
-  const labelsOf = (roster: Roster) =>
-    roster.crew.map((c) => (c.seat === conn.seat ? "You" : c.name));
-  let labels = labelsOf(conn.roster());
-  let looks = looksOf(conn.roster());
-  let rider = placeOf(conn.roster(), conn.seat)?.rider ?? -1;
-  const stopRoster = conn.onRoster((roster) => {
-    labels = labelsOf(roster);
-    looks = looksOf(roster);
-    rider = placeOf(roster, conn.seat)?.rider ?? -1;
+  // The race's crew can differ from the lobby seats: label our raft's riders, and find ours, by `crew`.
+  let roster = conn.roster();
+  const labelsOf = (raft: number) =>
+    roster.crew.filter((c) => c.raft === raft).map((c) => (c.seat === conn.seat ? "You" : c.name));
+  let looks = looksOf(roster);
+  let rider = placeOf(roster, conn.seat)?.rider ?? -1;
+  const stopRoster = conn.onRoster((next) => {
+    roster = next;
+    looks = looksOf(next);
+    rider = placeOf(next, conn.seat)?.rider ?? -1;
   });
 
   const received = await new Promise<Received>((resolve) => {
     let state: Received | undefined;
     conn.onFrame((frame) => {
-      const view = ourView(frame.snapshot);
+      const raft = followed(roster, conn.seat, frame.snapshot.crews.length);
+      const view = viewOf(frame.snapshot, raft);
       if (state) {
-        // A restart with a different crew is a new raft: cut instead of blending riders across.
-        const recrewed = view.riders.length !== state.curr.riders.length;
-        state.prev = recrewed ? view : state.curr;
+        // A restart with a different crew or raft is a new raft: cut instead of blending riders across.
+        const cut = raft !== state.raft || view.riders.length !== state.curr.riders.length;
+        state.prev = cut ? view : state.curr;
         state.curr = view;
+        state.raft = raft;
         state.at = performance.now();
-        state.events.push(...oursOnly(frame.events));
+        sortEvents(frame.events, raft, state.events, state.rivalEvents);
         return;
       }
-      state = { prev: view, curr: view, at: performance.now(), events: oursOnly(frame.events) };
+      state = { prev: view, curr: view, raft, at: performance.now(), events: [], rivalEvents: [] };
+      sortEvents(frame.events, raft, state.events, state.rivalEvents);
       resolve(state);
     });
   });
 
   return {
-    seatLabels: () => labels,
-    seatLooks: () => looks,
+    seatLabels: () => labelsOf(received.raft),
+    looks: () => looks,
     tick() {
       gamepads.poll();
       conn.send(source.read());
     },
-    restart: () => conn.restart(),
+    restart() {
+      const blocked = startBlocker(roster);
+      if (blocked === null) conn.restart();
+      return blocked;
+    },
     frame() {
       const alpha = Math.min(1, Math.max(0, (performance.now() - received.at) / FRAME_MS));
       const events = received.events.splice(0);
+      const rivalEvents = received.rivalEvents.splice(0);
       const pad = gamepads.connected()[0];
       rumbleFor(
         gamepads,
@@ -209,7 +280,8 @@ export async function onlineSession(
         (seat) => (seat === rider ? pad : undefined),
         () => (pad === undefined ? [] : [pad]),
       );
-      return { prev: received.prev, curr: received.curr, alpha, events };
+      const { prev, curr, raft } = received;
+      return { prev, curr, alpha, raft, events, rivalEvents };
     },
     dispose() {
       stopRoster();

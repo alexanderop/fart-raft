@@ -98,8 +98,17 @@ button {
   margin-left: -9px;
   translate: 0 -50%;
   border-radius: 50%;
-  background: #ffe45c;
+  background: var(--team, #ffe45c);
   border: 3px solid var(--outline);
+}
+
+/* Team race: the rival raft's marker, smaller and under ours, in its team color. */
+.track-raft.rival {
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-width: 2px;
+  opacity: 0.85;
 }
 
 .hud-timer,
@@ -196,6 +205,7 @@ button {
 
 .hud-finish {
   position: absolute;
+  z-index: 1;
   top: 50%;
   left: 50%;
   translate: -50% -50%;
@@ -1578,4 +1588,106 @@ button {
     max-height: none;
     overflow: visible;
   }
+}
+
+/* ── Team race: rival tag, result strip and result table ──────────────────── */
+
+.rival-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 1px 8px 2px;
+  border-radius: 999px;
+  background: var(--team);
+  border: 2px solid var(--outline);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  -webkit-text-stroke: 3px var(--outline);
+  paint-order: stroke fill;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.hud-result {
+  position: absolute;
+  top: calc(64px + var(--safe-t));
+  left: 50%;
+  translate: -50% 0;
+  max-width: calc(100vw - 32px);
+  padding: 4px 16px 6px;
+  border-radius: 16px;
+  background: rgb(43 52 65 / 0.85);
+  font-size: 22px;
+  font-weight: 900;
+  white-space: nowrap;
+  -webkit-text-stroke: 4px var(--outline);
+  visibility: hidden;
+}
+
+.hud-result.on {
+  visibility: visible;
+  animation: finish-in 0.5s both;
+}
+
+.result-gap {
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-finish:has(.finish-result:not(:empty)) .finish-deaths {
+  display: none;
+}
+
+.finish-result {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 6px;
+  font-size: 18px;
+  -webkit-text-stroke: 3px var(--outline);
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 12px;
+  border-left: 6px solid var(--team);
+  background: rgb(0 0 0 / 0.18);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.result-row b {
+  color: var(--team);
+}
+
+.result-row.racing span:nth-of-type(1) {
+  opacity: 0.75;
+}
+
+@media (max-width: 480px) {
+  .hud-result {
+    top: calc(52px + var(--safe-t));
+    font-size: 17px;
+  }
+
+  .finish-result {
+    font-size: 15px;
+  }
+}
+
+/* ── Team rooms and the start menu's rival raft ───────────────────────────── */
+
+.menu-seats li.menu-rival {
+  grid-column: 1 / -1;
+  border-left: 6px solid var(--c);
+}
+
+.race-picker {
+  display: grid;
+  gap: 8px;
 }

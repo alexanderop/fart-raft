@@ -3,18 +3,20 @@ import { CONTROLS } from "../../input/keyboard.ts";
 import { planSeats, type SeatKind } from "../../input/sources.ts";
 import { DEFAULT_DIFFICULTY, MAX_LOCAL } from "../../sim/constants.ts";
 import type { Difficulty } from "../../sim/types.ts";
-import { difficultyPicker } from "./difficulty.ts";
+import { difficultyPicker, racePicker } from "./pickers.ts";
 import type { VolumeStore } from "../fx/volume.ts";
 import { volumePanel } from "./volume.ts";
 import { lookBadge, lookColor, parseLook, type Look } from "../../look.ts";
 import { openWardrobe } from "./wardrobe.ts";
-import { MAX_NAME } from "../../net/protocol.ts";
+import { teamColor, teamName } from "../teams.ts";
+import { isRoomMode, isTeamMode, MAX_NAME, type RoomMode } from "../../net/protocol.ts";
 
 /**
  * What the start menu decides. Humans take the first seats; bots fill the rest when enabled.
- * `difficulty` is how hard the course plays (chill unless picked otherwise).
+ * `difficulty` is how hard the course plays (chill unless picked otherwise). `race` "ghost" or
+ * "bump" races that crew against a raft of bots.
  */
-export type GameConfig = { humans: number; bots: boolean; difficulty: Difficulty };
+export type GameConfig = { humans: number; bots: boolean; difficulty: Difficulty; race: RoomMode };
 
 const STORAGE_KEY = "fart-raft:menu";
 const PLAYERS_KEY = "fart-raft:players";
@@ -104,7 +106,13 @@ export const crewSize = (c: GameConfig): number => (c.bots ? MAX_LOCAL : c.human
 /** `?mode=wild` picks Wild; anything else (or nothing) is Chill. */
 const difficultyOf = (mode: unknown): Difficulty => (mode === "wild" ? "wild" : DEFAULT_DIFFICULTY);
 
-/** `?players=N&bots=0|1[&mode=wild]` skips the menu (handy for sharing a setup and for tests). */
+/** `?race=ghost|bump` is a team race against bots; anything else (or nothing) is co-op. */
+const raceOf = (race: unknown): RoomMode => (isRoomMode(race) ? race : "coop");
+
+/**
+ * `?players=N&bots=0|1[&mode=wild][&race=ghost|bump]` skips the menu (handy for sharing a setup
+ * and for tests).
+ */
 export function configFromUrl(search: string): GameConfig | undefined {
   const params = new URLSearchParams(search);
   const players = params.get("players");
@@ -114,12 +122,14 @@ export function configFromUrl(search: string): GameConfig | undefined {
     humans,
     bots: params.get("bots") === "1",
     difficulty: difficultyOf(params.get("mode")),
+    race: raceOf(params.get("race")),
   });
 }
 
 export function configToSearch(c: GameConfig): string {
   const mode = c.difficulty === DEFAULT_DIFFICULTY ? "" : `&mode=${c.difficulty}`;
-  return `?players=${c.humans}&bots=${c.bots ? 1 : 0}${mode}`;
+  const race = isTeamMode(c.race) ? `&race=${c.race}` : "";
+  return `?players=${c.humans}&bots=${c.bots ? 1 : 0}${mode}${race}`;
 }
 
 /** No humans means watching bots; a raft needs at least one rider. */
@@ -127,6 +137,9 @@ const normalize = (c: GameConfig): GameConfig => (c.humans === 0 ? { ...c, bots:
 
 /** The difficulty last started from the menu: the online lobby offers it first too. */
 export const lastDifficulty = (): Difficulty => loadLast().difficulty;
+
+/** Co-op, Ghost or Bump, as last started from the menu: the online lobby offers it first too. */
+export const lastRace = (): RoomMode => loadLast().race;
 
 function loadLast(): GameConfig {
   try {
@@ -143,12 +156,13 @@ function loadLast(): GameConfig {
         humans: Math.max(0, Math.min(MAX_LOCAL, saved.humans)),
         bots: saved.bots,
         difficulty: difficultyOf("difficulty" in saved ? saved.difficulty : undefined),
+        race: raceOf("race" in saved ? saved.race : undefined),
       });
     }
   } catch {
     // Storage blocked (private mode): fall through to the default.
   }
-  return { humans: 1, bots: false, difficulty: DEFAULT_DIFFICULTY };
+  return { humans: 1, bots: false, difficulty: DEFAULT_DIFFICULTY, race: "coop" };
 }
 
 function saveLast(c: GameConfig): void {
@@ -185,6 +199,7 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
           <input type="checkbox" data-bots />
           <span>Fill empty seats with bots</span>
         </label>
+        <div class="menu-mode" data-race-picker></div>
         <div class="menu-mode" data-mode-picker></div>
         <p class="menu-hint menu-pads" data-pads aria-live="polite"></p>
         </div>
@@ -209,6 +224,11 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
     config = { ...config, difficulty };
   });
   root.querySelector("[data-mode-picker]")!.append(mode.el);
+  const race = racePicker(config.race, (next) => {
+    config = { ...config, race: next };
+    render();
+  });
+  root.querySelector("[data-race-picker]")!.append(race.el);
   const sound = volumePanel(volume, { compact: true });
   root.querySelector("[data-volume]")!.append(sound.el);
 
@@ -235,25 +255,29 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
     );
     const plan = planSeats(kinds, connected, new Set());
     const padSeats = new Set(plan.pads.values());
-    seats.innerHTML = Array.from({ length: size }, (_, i) => {
-      if (i >= config.humans) return `<li class="bot">Bot</li>`;
-      const player = players[i]!;
-      const who = escapeHtml(player.name || `P${i + 1}`);
-      const how = padSeats.has(i)
-        ? "🎮 Controller"
-        : touch && i === 0
-          ? "👆 Touch"
-          : config.humans === 1
-            ? "WASD / Arrows · Space"
-            : CONTROLS[plan.keys.get(i) ?? i];
-      return `<li class="menu-seat" style="--c:${lookColor(player.look)}">
+    const rival = isTeamMode(config.race)
+      ? `<li class="bot menu-rival" style="--c:${teamColor(1)}">🆚 ${teamName(1)} raft · ${MAX_LOCAL} pirate bots</li>`
+      : "";
+    seats.innerHTML =
+      Array.from({ length: size }, (_, i) => {
+        if (i >= config.humans) return `<li class="bot">Bot</li>`;
+        const player = players[i]!;
+        const who = escapeHtml(player.name || `P${i + 1}`);
+        const how = padSeats.has(i)
+          ? "🎮 Controller"
+          : touch && i === 0
+            ? "👆 Touch"
+            : config.humans === 1
+              ? "WASD / Arrows · Space"
+              : CONTROLS[plan.keys.get(i) ?? i];
+        return `<li class="menu-seat" style="--c:${lookColor(player.look)}">
         <button type="button" class="menu-dress" data-dress="${i}" aria-label="Dress up ${who}">
           <span class="menu-dress-badge">${lookBadge(player.look)}</span>
           <span><b>${who}</b><small>${how}</small></span>
           <span class="menu-dress-edit">🎨</span>
         </button>
       </li>`;
-    }).join("");
+      }).join("") + rival;
   };
 
   const pick = (humans: number) => {

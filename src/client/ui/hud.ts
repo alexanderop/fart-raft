@@ -2,7 +2,9 @@ import { Vector3, type PerspectiveCamera } from "three";
 import { nearestS, sampleChannel } from "../../sim/channel.ts";
 import { GAS_MAX, MAX_CREW, TICK_RATE } from "../../sim/constants.ts";
 import { SEAT_COLORS } from "../render/zones.ts";
-import type { LevelData, Pose, SimEvent, View } from "../../sim/types.ts";
+import type { Crew, LevelData, Pose, SimEvent, View } from "../../sim/types.ts";
+import { teamColor, teamName } from "../teams.ts";
+import { teamResult, type TeamResult } from "./result.ts";
 import "./deaths.css";
 
 const LOW_GAS = 0.25;
@@ -10,6 +12,8 @@ const LOW_GAS = 0.25;
 const PUFF_GAP_TICKS = 6;
 /** Height above the water where the name tag floats, in meters. */
 const TAG_HEIGHT = 2.9;
+/** The rival raft's tag floats above its riders' name height. */
+const RIVAL_TAG_HEIGHT = 3.6;
 
 const CLOCK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M12 7v5.5l3.5 2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PUFF_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.4 8.9a4.8 4.8 0 0 1 .1 9.6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>`;
@@ -35,9 +39,12 @@ export function formatTime(ms: number): string {
   return `${pad2(m)}:${pad2(s)}.${pad2(cs)}`;
 }
 
+/** What the progress bar reads of a raft: where it is and how far its race got. */
+type Progress = Pick<Crew, "raft" | "phase">;
+
 export type ProgressTrack = {
   /** 0..1 along the course. */
-  at(snap: View): number;
+  at(crew: Progress): number;
   /** Where each checkpoint sits on the bar, 0..1, in race order. */
   markers: number[];
 };
@@ -56,14 +63,14 @@ export function progressTrack(level: LevelData): ProgressTrack {
     const frac = (p: { x: number; y: number }) =>
       Math.min(1, Math.max(0, (nearestS(route, p) - start) / (finish - start)));
     return {
-      at: (snap) =>
-        snap.phase.kind === "finished" ? 1 : snap.phase.kind === "countdown" ? 0 : frac(snap.raft),
+      at: (crew) =>
+        crew.phase.kind === "finished" ? 1 : crew.phase.kind === "countdown" ? 0 : frac(crew.raft),
       markers: checkpoints.map(frac),
     };
   }
   return {
-    at(snap) {
-      const { phase, raft } = snap;
+    at(crew) {
+      const { phase, raft } = crew;
       if (phase.kind === "finished") return 1;
       if (phase.kind === "countdown") return 0;
       const k = Math.min(phase.nextCheckpoint, n - 1);
@@ -77,6 +84,52 @@ export function progressTrack(level: LevelData): ProgressTrack {
     },
     markers: checkpoints.map((_, i) => (i + 1) / n),
   };
+}
+
+/**
+ * A team race as the HUD draws it: the raft we follow, every raft's crew and interpolated pose
+ * (by raft index), and the tick for live race clocks.
+ */
+export type TeamHud = {
+  raft: number;
+  crews: readonly Crew[];
+  poses: readonly Pose[];
+  tick: number;
+};
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
+
+/** "Red wins!" in Red's color, or "Draw!". */
+const resultTitle = (r: TeamResult) =>
+  r.winner === "draw"
+    ? "Draw!"
+    : `<span style="color:${teamColor(r.winner)}">${escapeHtml(teamName(r.winner))}</span> wins!`;
+
+const gapText = (r: TeamResult) => (r.winner === "draw" ? "" : `+${formatTime(r.gapMs)}`);
+
+/** Both rafts' times and wipeouts; a raft still racing shows its clock running. */
+const resultRows = (r: TeamResult, ours: number) =>
+  r.rows
+    .map(
+      (row) =>
+        `<div class="result-row${row.finished ? "" : " racing"}" style="--team:${teamColor(row.raft)}">
+          <b>${escapeHtml(teamName(row.raft))}${row.raft === ours ? " (you)" : ""}</b>
+          <span>${formatTime(row.timeMs)}${row.finished ? "" : "…"}</span>
+          <span>💀 ${row.deaths}</span>
+        </div>`,
+    )
+    .join("");
+
+/** The marker or tag for raft `raft`, made on first use. */
+function rivalEl(map: Map<number, HTMLElement>, raft: number, make: () => HTMLElement) {
+  let el = map.get(raft);
+  if (!el) {
+    el = make();
+    el.style.setProperty("--team", teamColor(raft));
+    map.set(raft, el);
+  }
+  return el;
 }
 
 export type HudOptions = {
@@ -102,10 +155,13 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
       <div class="hud-farts" data-farts>${PUFF_ICON}<span data-puffs>0</span></div>
       <div class="hud-count" data-count></div>
       <div class="hud-toast" data-toast></div>
+      <div class="hud-result" data-result aria-live="polite"></div>
+      <div class="hud-rivals" data-rivals></div>
       <div class="hud-finish" data-finish>
         <div class="finish-title">Finish!</div>
         <div class="finish-time" data-finish-time></div>
         <div class="finish-deaths" data-finish-deaths></div>
+        <div class="finish-result" data-finish-result></div>
         <div class="finish-hint">${matchMedia("(pointer: coarse)").matches ? "↻ to restart · ☰ for menu" : "R to restart · Esc for menu"}</div>
       </div>
       <div class="hud-hurt" data-hurt></div>
@@ -127,6 +183,15 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   const finish = $("[data-finish]");
   const finishTime = $("[data-finish-time]");
   const finishDeaths = $("[data-finish-deaths]");
+  const finishTitle = $(".finish-title");
+  const finishResult = $("[data-finish-result]");
+  const resultStrip = $("[data-result]");
+  const rivalLayer = $("[data-rivals]");
+  const track = $("[data-track]");
+  /** Progress-bar markers and floating "Rival" tags of the other rafts, by raft index. */
+  const rivalMarks = new Map<number, HTMLElement>();
+  const rivalTags = new Map<number, HTMLElement>();
+  let shownResult = "";
   const deathPill = $("[data-deaths]");
   const deathCount = $("[data-death-count]");
   const hurt = $("[data-hurt]");
@@ -180,6 +245,73 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
     }
   }
 
+  /** Screen position of a world point (sim x, y at `height`), or null behind the camera. */
+  function onScreen(x: number, y: number, height: number): { x: number; y: number } | null {
+    world.set(x, height, -y).project(camera);
+    if (world.z >= 1) return null;
+    return { x: ((world.x + 1) / 2) * innerWidth, y: ((1 - world.y) / 2) * innerHeight };
+  }
+
+  function drawTeams(t: TeamHud | null) {
+    raftMark.style.removeProperty("--team");
+    if (t === null || t.crews.length < 2) {
+      for (const el of [...rivalMarks.values(), ...rivalTags.values()]) el.remove();
+      rivalMarks.clear();
+      rivalTags.clear();
+      showResult(null, t?.raft ?? 0);
+      return;
+    }
+    raftMark.style.setProperty("--team", teamColor(t.raft));
+    t.crews.forEach((crew, raft) => {
+      if (raft === t.raft) return;
+      const mark = rivalEl(rivalMarks, raft, () => {
+        const b = document.createElement("b");
+        b.className = "track-raft rival";
+        track.insertBefore(b, raftMark);
+        return b;
+      });
+      const p = Math.min(1, Math.max(0, progress.at(crew)));
+      mark.style.left = `calc(9px + (100% - 18px) * ${p})`;
+
+      const tag = rivalEl(rivalTags, raft, () => {
+        const el = document.createElement("div");
+        el.className = "rival-tag";
+        el.textContent = "Rival";
+        rivalLayer.append(el);
+        return el;
+      });
+      const pose = t.poses[raft] ?? crew.raft;
+      const at = onScreen(pose.x, pose.y, RIVAL_TAG_HEIGHT);
+      tag.style.visibility = at ? "visible" : "hidden";
+      if (at)
+        tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+    });
+
+    const result = teamResult(t.crews, t.tick);
+    // A raft still racing sees the result as a strip; once it finishes, inside its finish card.
+    resultStrip.classList.toggle(
+      "on",
+      result !== null && t.crews[t.raft]?.phase.kind !== "finished",
+    );
+    showResult(result, t.raft);
+  }
+
+  /** Writes the result into the strip and the finish card, only when its text changed. */
+  function showResult(result: TeamResult | null, ours: number) {
+    const title = result ? resultTitle(result) : "Finish!";
+    const strip = result ? `${title} <span class="result-gap">${gapText(result)}</span>` : "";
+    const card = result
+      ? `${resultRows(result, ours)}<div class="result-gap">${result.settled ? "" : "Still racing · "}${gapText(result)}</div>`
+      : "";
+    const key = `${strip}|${card}`;
+    if (key === shownResult) return;
+    shownResult = key;
+    if (!result) resultStrip.classList.remove("on");
+    finishTitle.innerHTML = title;
+    resultStrip.innerHTML = strip;
+    finishResult.innerHTML = card;
+  }
+
   function placeTags(raft: Pose, riders: View["riders"]) {
     const cos = Math.cos(raft.rot);
     const sin = Math.sin(raft.rot);
@@ -230,6 +362,8 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
         show("Wipeout!", "slam");
       }
     },
+    /** Team race extras (rival markers and tags, the result), or null in co-op. After `draw`. */
+    drawTeams,
     draw(snap: View, raft: Pose) {
       const { phase } = snap;
       const ms =
