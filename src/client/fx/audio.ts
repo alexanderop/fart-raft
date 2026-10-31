@@ -221,6 +221,13 @@ export function createAudio(volume: VolumeStore) {
     lfo(0.05, 60, droneFilter.frequency);
   }
 
+  /** The one place the browser's context is made to match `paused`: safe to call any time. */
+  function sync() {
+    if (!ctx) return;
+    if (paused && ctx.state === "running") void ctx.suspend().catch(() => undefined);
+    else if (!paused && ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+  }
+
   function ensureContext() {
     if (!ctx) {
       try {
@@ -231,7 +238,7 @@ export function createAudio(volume: VolumeStore) {
         return;
       }
     }
-    if (ctx.state === "suspended" && !paused) void ctx.resume().catch(() => undefined);
+    sync();
   }
 
   // Browsers keep the context suspended until a user gesture: create and resume it on the first one.
@@ -554,11 +561,11 @@ export function createAudio(volume: VolumeStore) {
      */
     suspend() {
       paused = true;
-      if (ctx?.state === "running") void ctx.suspend().catch(() => undefined);
+      sync();
     },
     resume() {
       paused = false;
-      if (ctx?.state === "suspended") void ctx.resume().catch(() => undefined);
+      sync();
     },
     /** M key: same as the mute button. Returns whether the game is now silent. */
     toggleMute(): boolean {
