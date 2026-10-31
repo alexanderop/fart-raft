@@ -1,4 +1,11 @@
-import { halfWidthAt, levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
+import {
+  flowSpeed,
+  halfWidthAt,
+  levelWalls,
+  nearestS,
+  pointAt,
+  type Sample,
+} from "../sim/channel.ts";
 import { padAt } from "../sim/boost.ts";
 import { BOOST_ACCEL, BOOST_SPEED, hazardRate, RAFT_HULL } from "../sim/constants.ts";
 import { hazardBoxes, hazardReach } from "../sim/hazards/index.ts";
@@ -49,6 +56,11 @@ export const LANE_CLEAR_AHEAD = 20;
 /** The crew keeps this far (m) off a spiked bank. */
 const SPIKE_GAP = 0.8;
 
+/**
+ * How much slower than the water (m/s) the crew can hold the raft: enough to back off at
+ * PACE_BACK (-1.5) against the plain current, not enough to stop in rapids.
+ */
+const MAX_BRAKE = 5;
 /** The raft settles at a pace with this time constant, s. */
 const RESPONSE = 0.7;
 /** Preferences, in metres of room: be quick, be straight, and keep to the plan already followed. */
@@ -218,6 +230,13 @@ export function planCrossing(
   // table lookup instead of a search along the channel for every step.
   const cells = Math.ceil((BEHIND + end + 10) / CELL) + 2;
   const table = Array.from({ length: cells }, (_, i) => frame.line(me.s - BEHIND + i * CELL));
+  // The slowest the crew can go over the ground at each cell: in rapids it cannot stop.
+  const ch = level.channel;
+  const floors = table.map((_, i) =>
+    ch ? flowSpeed(ch, me.s - BEHIND + i * CELL) - MAX_BRAKE : -Infinity,
+  );
+  const floorAt = (x: number): number =>
+    floors[Math.max(0, Math.min(cells - 1, Math.round((x + BEHIND) / CELL)))]!;
   const point = (x: number, lat: number): Vec2 => {
     const f = (x + BEHIND) / CELL;
     const i = Math.max(0, Math.min(cells - 2, Math.floor(f)));
@@ -282,7 +301,7 @@ export function planCrossing(
         if (worst < floor) return -Infinity; // cannot beat the best so far
       }
       if (x > end) return worst;
-      const goal = held >= 0 && t - held < holdFor ? pace : paces.fast;
+      const goal = Math.max(floorAt(x), held >= 0 && t - held < holdFor ? pace : paces.fast);
       v += ((goal - v) * DT) / RESPONSE;
       // A boost pad shoves the raft on whatever the crew wants: a lane over one arrives early.
       if (pads.length && padAt(pads, p) >= 0) v = Math.min(BOOST_SPEED, v + BOOST_ACCEL * DT);

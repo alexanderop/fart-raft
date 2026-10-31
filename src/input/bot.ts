@@ -46,8 +46,11 @@ const ARRIVED = 0.05;
 
 type Vec = Vec2;
 
-/** The latest crossing plan per level: the bots of one crew share it, see below. */
-const sharedPlans = new WeakMap<LevelData, { snap: View; crossing: Crossing | null }>();
+/**
+ * The crossing plan worked out for a View. A crew's bots all read their raft's View, so the first
+ * to plan plans for all of them; a rival crew reads its own View and keeps its own plan.
+ */
+const sharedPlans = new WeakMap<View, Crossing | null>();
 
 /**
  * A crew that gains less than STALL_PROGRESS m in STALL_TICKS has waited too long: for the next
@@ -254,9 +257,8 @@ export function botSource(
         const base = frame.at(here.s, here.lat);
         const ahead = frame.at(here.s + 1, here.lat);
         const along = vel.x * (ahead.x - base.x) + vel.y * (ahead.y - base.y);
-        // The crew's bots all read the same snapshot, so one of them plans for all.
-        const shared = sharedPlans.get(level);
-        if (shared?.snap === snap) crossing = shared.crossing;
+        const shared = sharedPlans.get(snap);
+        if (shared !== undefined) crossing = shared;
         else {
           const keep = crossing
             ? {
@@ -267,7 +269,7 @@ export function botSource(
               }
             : null;
           crossing = planCrossing(level, frame, snap, paces, along, keep);
-          sharedPlans.set(level, { snap, crossing });
+          sharedPlans.set(snap, crossing);
         }
       }
       // A crew that waits for the right moment and never finds it gives up waiting and goes.
