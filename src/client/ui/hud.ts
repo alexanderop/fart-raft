@@ -262,6 +262,11 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
       return;
     }
     raftMark.style.setProperty("--team", teamColor(t.raft));
+    // A spectator who switches team now follows the raft that was a rival: drop its stale marker and tag.
+    for (const map of [rivalMarks, rivalTags]) {
+      map.get(t.raft)?.remove();
+      map.delete(t.raft);
+    }
     t.crews.forEach((crew, raft) => {
       if (raft === t.raft) return;
       const mark = rivalEl(rivalMarks, raft, () => {
