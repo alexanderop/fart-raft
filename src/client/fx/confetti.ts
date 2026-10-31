@@ -3,7 +3,7 @@ import { applyPose } from "../render/coords.ts";
 
 const CAPACITY = 480;
 const GRAVITY = 7;
-const COLORS = [0xff8a1f, 0xffc53d, 0x8be24a, 0x9b5cff, 0x2a1b33, 0xf2ead3];
+const COLORS = [0xff5a5f, 0xffd23f, 0x3ec1ff, 0x7cd957, 0xb388ff, 0xff8fd0, 0xffffff];
 
 type Piece = {
   age: number;

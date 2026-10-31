@@ -6,6 +6,9 @@ import type { Difficulty } from "../../sim/types.ts";
 import { difficultyPicker } from "./difficulty.ts";
 import type { VolumeStore } from "../fx/volume.ts";
 import { volumePanel } from "./volume.ts";
+import { lookBadge, lookColor, parseLook, type Look } from "../../look.ts";
+import { openWardrobe } from "./wardrobe.ts";
+import { MAX_NAME } from "../../net/protocol.ts";
 
 /**
  * What the start menu decides. Humans take the first seats; bots fill the rest when enabled.
@@ -14,6 +17,44 @@ import { volumePanel } from "./volume.ts";
 export type GameConfig = { humans: number; bots: boolean; difficulty: Difficulty };
 
 const STORAGE_KEY = "fart-raft:menu";
+const PLAYERS_KEY = "fart-raft:players";
+
+/** A couch player's name and look, picked in the wardrobe. Player 1's look also rides online. */
+export type LocalPlayer = { name: string; look: Look };
+
+/** The saved couch players, one per local seat. */
+export function loadPlayers(): LocalPlayer[] {
+  let saved: unknown = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(PLAYERS_KEY) ?? "null");
+  } catch {
+    // Storage blocked or garbled: everyone starts in their seat's default look.
+  }
+  const list = Array.isArray(saved) ? saved : [];
+  return Array.from({ length: MAX_LOCAL }, (_, i) => {
+    const p: unknown = list[i];
+    const name =
+      typeof p === "object" && p !== null && "name" in p && typeof p.name === "string"
+        ? p.name.slice(0, MAX_NAME)
+        : "";
+    const look = parseLook(typeof p === "object" && p !== null && "look" in p ? p.look : null, i);
+    return { name, look };
+  });
+}
+
+export function savePlayers(players: readonly LocalPlayer[]): void {
+  try {
+    localStorage.setItem(PLAYERS_KEY, JSON.stringify(players));
+  } catch {
+    // Not critical: the wardrobe just won't remember.
+  }
+}
+
+const escapeHtml = (s: string) =>
+  s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
 
 /** A phone or tablet: the first human plays on the on-screen stick and FART button. */
 export const isTouchDevice = (): boolean => matchMedia("(pointer: coarse)").matches;
@@ -121,12 +162,15 @@ function saveLast(c: GameConfig): void {
 /** Start screen: pick how many people are playing and whether bots fill the empty seats, or go online. */
 export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch> {
   let config = loadLast();
+  let players = loadPlayers();
+  /** While the wardrobe is open, the menu's keys and pads leave it alone. */
+  let dressing = false;
   host.insertAdjacentHTML(
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="menu-title">
       <div class="menu-card menu-split">
         <div class="menu-who">
-        <h1 id="menu-title" class="menu-title">🎃 Fart Raft 🎃</h1>
+        <h1 id="menu-title" class="menu-title">Fart Raft</h1>
         <p class="menu-sub">Steer the raft together. Every fart pushes it.</p>
         <div class="menu-label" id="players-label">Players</div>
         <div class="menu-players" role="radiogroup" aria-labelledby="players-label">
@@ -193,10 +237,22 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
     const padSeats = new Set(plan.pads.values());
     seats.innerHTML = Array.from({ length: size }, (_, i) => {
       if (i >= config.humans) return `<li class="bot">Bot</li>`;
-      if (padSeats.has(i)) return `<li><b>P${i + 1}</b> 🎮 Controller</li>`;
-      if (touch && i === 0) return `<li><b>P1</b> 👆 Touch</li>`;
-      const keys = config.humans === 1 ? "WASD / Arrows · Space" : CONTROLS[plan.keys.get(i) ?? i];
-      return `<li><b>P${i + 1}</b> ${keys}</li>`;
+      const player = players[i]!;
+      const who = escapeHtml(player.name || `P${i + 1}`);
+      const how = padSeats.has(i)
+        ? "🎮 Controller"
+        : touch && i === 0
+          ? "👆 Touch"
+          : config.humans === 1
+            ? "WASD / Arrows · Space"
+            : CONTROLS[plan.keys.get(i) ?? i];
+      return `<li class="menu-seat" style="--c:${lookColor(player.look)}">
+        <button type="button" class="menu-dress" data-dress="${i}" aria-label="Dress up ${who}">
+          <span class="menu-dress-badge">${lookBadge(player.look)}</span>
+          <span><b>${who}</b><small>${how}</small></span>
+          <span class="menu-dress-edit">🎨</span>
+        </button>
+      </li>`;
     }).join("");
   };
 
@@ -210,6 +266,26 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
   };
 
   for (const b of playerButtons) b.addEventListener("click", () => pick(Number(b.dataset.humans)));
+  seats.addEventListener("click", async (e) => {
+    const b =
+      e.target instanceof Element ? e.target.closest<HTMLButtonElement>("[data-dress]") : null;
+    if (!b || dressing) return;
+    const i = Number(b.dataset.dress);
+    const player = players[i]!;
+    dressing = true;
+    const picked = await openWardrobe(host, {
+      title: config.humans === 1 ? "Your rider" : `Player ${i + 1}`,
+      name: player.name,
+      look: player.look,
+    });
+    dressing = false;
+    if (picked) {
+      players = players.with(i, picked);
+      savePlayers(players);
+      render();
+    }
+    root.querySelector<HTMLButtonElement>(`[data-dress="${i}"]`)?.focus();
+  });
   bots.addEventListener("change", () => {
     config = normalize({ ...config, bots: bots.checked });
     render();
@@ -231,6 +307,7 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
       launch({ kind: "local", config });
     };
     const onKey = (e: KeyboardEvent) => {
+      if (dressing) return;
       if (e.code === "Enter" || e.code === "Space") {
         if (document.activeElement instanceof HTMLButtonElement && document.activeElement !== start)
           return;
@@ -270,7 +347,7 @@ export function showMenu(host: HTMLElement, volume: VolumeStore): Promise<Launch
       if (connected.length !== lastCount) {
         lastCount = connected.length;
         render();
-      } else if (intent !== undefined && intent !== lastIntent) {
+      } else if (intent !== undefined && intent !== lastIntent && !dressing) {
         act(intent);
       }
       lastIntent = intent;

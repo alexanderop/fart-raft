@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { DIFFICULTIES, MAX_CREW } from "../sim/constants.ts";
 import type * as Sim from "../sim/types.ts";
+import { ANIMALS, GADGETS, HATS, LOOK_COLORS, OUTFITS, type Look as LookData } from "../look.ts";
 
 // Wire schemas for the sim's plain-data types. Shared by the browser and the server, so no DOM
 // and no Node here. `Drift` below fails the typecheck when src/sim/types.ts and these diverge.
@@ -66,6 +67,7 @@ export const SimEvent = Schema.Union([
     dirY: Num,
   }),
   Schema.Struct({ type: Schema.tag("respawn"), x: Num, y: Num }),
+  Schema.Struct({ type: Schema.tag("boost"), x: Num, y: Num, dirX: Num, dirY: Num }),
 ]);
 
 /** Courses a room can race. The client and the server both map these names to course JSON. */
@@ -84,15 +86,35 @@ export const RoomCode = Schema.String.check(
 export const MAX_NAME = 16;
 export const PlayerName = Schema.String.check(Schema.isMaxLength(MAX_NAME));
 
-/** One rider in the current race. `seat` is null once its player has left: the rider idles. */
-export const CrewMember = Schema.Struct({ name: Schema.String, seat: Schema.NullOr(SeatIndex) });
+/** Animal, color, hat, outfit and gadget: cosmetic only, the sim never sees it. */
+export const Look = Schema.Struct({
+  animal: Schema.Literals(ANIMALS),
+  color: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: LOOK_COLORS.length - 1 })),
+  hat: Schema.Literals(HATS),
+  outfit: Schema.Literals(OUTFITS),
+  gadget: Schema.Literals(GADGETS),
+});
 
-/** Who is in the room. `seats[i]` is a player's name, or null for an open seat. */
+/** A seated player as everyone sees them. */
+export const Player = Schema.Struct({ name: Schema.String, look: Look });
+export type Player = typeof Player.Type;
+
+/**
+ * One rider in the current race. `seat` is null once its player has left: the rider idles in
+ * the look it had.
+ */
+export const CrewMember = Schema.Struct({
+  name: Schema.String,
+  seat: Schema.NullOr(SeatIndex),
+  look: Look,
+});
+
+/** Who is in the room. `seats[i]` is a player, or null for an open seat. */
 export const Roster = Schema.Struct({
   code: RoomCode,
   course: CourseName,
   difficulty: Difficulty,
-  seats: Schema.mutable(Schema.Array(Schema.NullOr(Schema.String))),
+  seats: Schema.mutable(Schema.Array(Schema.NullOr(Player))),
   /** The human who can start the race: whoever has been in the room longest. */
   host: Schema.NullOr(SeatIndex),
   started: Schema.Boolean,
@@ -133,7 +155,7 @@ export const RaftRpcs = RpcGroup.make(
   }),
   // The stream's lifetime is the seat lease: ending it opens the seat up again.
   Rpc.make("Join", {
-    payload: { code: RoomCode, name: PlayerName },
+    payload: { code: RoomCode, name: PlayerName, look: Look },
     success: ServerMsg,
     error: Schema.Union([RoomFull, RoomNotFound]),
     stream: true,
@@ -143,6 +165,8 @@ export const RaftRpcs = RpcGroup.make(
   Rpc.make("Start", { payload: Seated }),
   /** Any seated player: a new race whose crew is everyone seated now. */
   Rpc.make("Restart", { payload: Seated }),
+  /** Any seated player: change their look, in the lobby or mid-race. */
+  Rpc.make("SetLook", { payload: { ...Seated, look: Look } }),
 );
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -156,4 +180,5 @@ export type Drift = [
   Expect<Same<typeof Pose.Type, Sim.Pose>>,
   Expect<Same<typeof RiderPose.Type, Sim.RiderPose>>,
   Expect<Same<typeof Difficulty.Type, Sim.Difficulty>>,
+  Expect<Same<typeof Look.Type, LookData>>,
 ];

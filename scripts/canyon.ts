@@ -1,8 +1,11 @@
 // Generates courses/canyon.json. Rerun after editing the spec: `pnpm course`.
-// Five legs: sweepers, spinners, a drop gate and a bumper down the winding canyon, rapids, the hammer
-// gauntlet, piston alley, and a minefield before the rapids run to the finish.
+// Five legs: sweepers, a double gate, spinners, a drop gate and a bumper down the winding canyon,
+// rapids under a swinging mace, the hammer gauntlet, piston alley, and a minefield before the
+// rapids run to the finish under a second mace. Two calm ponds are breathers: one right after
+// the start, one between the first leg and spinner-2.
 // Checkpoints and hazards are placed by arc length along the channel, so moving a control
 // point keeps every gate square to the stream.
+import { halfWidthAt } from "../src/sim/channel.ts";
 import { HAMMER_ARM, SWEEP_AMPLITUDE } from "../src/sim/constants.ts";
 import type { Channel, HazardDef, LevelData } from "../src/sim/types.ts";
 import { channelKit, round, writeCourse } from "./course.ts";
@@ -11,39 +14,48 @@ const channel: Channel = {
   halfWidth: 7,
   points: [
     { x: -6, y: 0 },
-    { x: 40, y: 0 },
-    { x: 62, y: 18 },
-    { x: 62, y: 48 },
-    { x: 84, y: 68 },
-    { x: 124, y: 68 },
-    { x: 146, y: 48 },
-    { x: 146, y: 14 },
-    { x: 170, y: -6 },
-    { x: 214, y: -6 },
-    { x: 238, y: 16 },
-    { x: 238, y: 50 },
-    { x: 260, y: 70 },
-    { x: 304, y: 70 },
-    { x: 384, y: 70 },
-    { x: 406, y: 48 },
-    { x: 406, y: -6 },
-    { x: 428, y: -28 },
-    { x: 496, y: -28 },
-    { x: 518, y: -6 },
-    { x: 518, y: 44 },
-    { x: 540, y: 66 },
-    { x: 610, y: 66 },
+    { x: 42, y: 0 },
+    { x: 88, y: 0 },
+    { x: 110, y: 18 },
+    { x: 110, y: 48 },
+    { x: 132, y: 68 },
+    { x: 172, y: 68 },
+    { x: 194, y: 48 },
+    { x: 194, y: 14 },
+    { x: 218, y: -6 },
+    { x: 262, y: -6 },
+    { x: 286, y: 16 },
+    { x: 286, y: 50 },
+    { x: 308, y: 70 },
+    { x: 352, y: 70 },
+    { x: 404, y: 70 },
+    { x: 484, y: 70 },
+    { x: 506, y: 48 },
+    { x: 506, y: -6 },
+    { x: 528, y: -28 },
+    { x: 596, y: -28 },
+    { x: 618, y: -6 },
+    { x: 618, y: 44 },
+    { x: 640, y: 66 },
+    { x: 710, y: 66 },
   ],
   spikes: [],
   // Whitewater on two long straights, ending well before the next bend's spikes: the raft
   // shoots through at RAPIDS_SPEED, then the last one carries it over the finish line.
   rapids: [
-    { from: 440, to: 490 },
-    { from: 796, to: 862 },
+    { from: 540, to: 590 },
+    { from: 896, to: 962 },
+  ],
+  // Two calm ponds, round pools 2.6× the channel's width with slow water: one right after the
+  // start, one on the long run between the canyon's first leg and the rapids.
+  ponds: [
+    { from: 10, to: 58, halfWidth: 18 },
+    { from: 449, to: 497, halfWidth: 18 },
   ],
 };
 
-const { samples, length, at, across, gate, outerBends, dropgate, mine } = channelKit(channel);
+const { samples, length, at, across, gate, outerBends, dropgate, doublegate, mine, mace, boost } =
+  channelKit(channel);
 
 /**
  * Hinged on one bank, resting diagonally downstream: it swings between straight across and
@@ -51,7 +63,7 @@ const { samples, length, at, across, gate, outerBends, dropgate, mine } = channe
  */
 function sweeper(id: string, s: number, side: 1 | -1, speed: number): HazardDef {
   const p = at(s);
-  const hw = channel.halfWidth;
+  const hw = halfWidthAt(channel, s);
   return {
     id,
     kind: "sweeper",
@@ -70,7 +82,7 @@ function sweeper(id: string, s: number, side: 1 | -1, speed: number): HazardDef 
  */
 function hammer(id: string, s: number, side: 1 | -1, speed: number, phase: number): HazardDef {
   const p = at(s);
-  const lat = side * (channel.halfWidth + 0.8 - HAMMER_ARM);
+  const lat = side * (halfWidthAt(channel, s) + 0.8 - HAMMER_ARM);
   return {
     id,
     kind: "hammer",
@@ -88,7 +100,7 @@ function hammer(id: string, s: number, side: 1 | -1, speed: number, phase: numbe
 function piston(id: string, s: number, side: 1 | -1, speed: number, phase: number): HazardDef {
   const p = at(s);
   const hx = 1.2;
-  const lat = side * (channel.halfWidth + hx);
+  const lat = side * (halfWidthAt(channel, s) + hx);
   return {
     id,
     kind: "piston",
@@ -116,6 +128,9 @@ function spinner(id: string, s: number, speed: number): HazardDef {
   const side = speed > 0 ? 1 : -1; // counter-clockwise sweeps upstream on the left bank
   return { ...across(s, 2.6, 0.4, side * SPINNER_OFFSET), id, kind: "spinner", speed };
 }
+/** A rock in a pond: a small island (`isIsland`) of radius `r`, `lat` m left of center at `s`. */
+const rock = (s: number, lat: number, r = 1.2) => across(s, r, r, lat);
+
 // Spikes line the outer bank of every bend, where a raft carried by its momentum hits.
 channel.spikes = outerBends(0.03);
 
@@ -124,37 +139,58 @@ const level: LevelData = {
   name: "canyon",
   spawn: { x: start.x, y: start.y, rot: Math.atan2(start.ty, start.tx) },
   channel,
-  walls: [],
+  // Grey rocks in the ponds: small islands near the shore, well off the racing line.
+  walls: [rock(30, 12.5), rock(40, -13), rock(466, -12.5), rock(480, 13)],
   // A gate just past spinner-1, on the gentle run before the spiked bend, so a wipeout at the bend
   // or the log respawns past the spinner instead of in front of it.
-  checkpoints: [gate(100), gate(165), gate(240), gate(433), gate(605), gate(705), gate(length - 6)],
+  checkpoints: [gate(148), gate(213), gate(288), gate(533), gate(705), gate(805), gate(length - 6)],
   hazards: [
-    sweeper("sweeper-1", 26, 1, 1.3),
-    spinner("spinner-1", 147, 1.1),
+    sweeper("sweeper-1", 74, 1, 1.3),
+    // A spiked double gate where the first two bends meet, just before the first checkpoint: its
+    // doors swing shut across the channel and open again; slip through while they stand open.
+    doublegate("doublegate-1", 136, { phase: 1 }),
+    spinner("spinner-1", 195, 1.1),
     // A log rolls from bank to bank on the straight before the second half: the raft slips past
     // behind it or ahead of it.
-    { ...across(205, 2.4, 1), id: "log-1", kind: "log", speed: 0.7, range: 3 },
-    sweeper("sweeper-2", 276, -1, 1.6),
+    { ...across(253, 2.4, 1), id: "log-1", kind: "log", speed: 0.7, range: 3 },
+    sweeper("sweeper-2", 324, -1, 1.6),
     // A lone drop gate on the calm run before the bumper teaches its timing: wait for it to slam,
     // then dash under it while it rises.
-    dropgate("dropgate-1", 310, { phase: 2 }),
+    dropgate("dropgate-1", 358, { phase: 2 }),
     // A pumpkin bumper on the left of the last long run: the raft takes the right lane.
-    { ...across(345, 1.5, 1.5, 2.5), id: "bumper-1", kind: "bumper", speed: 2.2 },
-    spinner("spinner-2", 415, -1.2),
+    { ...across(393, 1.5, 1.5, 2.5), id: "bumper-1", kind: "bumper", speed: 2.2 },
+    spinner("spinner-2", 515, -1.2),
+    // A spiked mace swings bank to bank over the first rapids: it sweeps the water through the
+    // middle of each swing and hangs high at either end, so the raft shoots under it on the beat.
+    mace("mace-1", 568, { speed: 1.3 }),
     // The hammer gauntlet: three mallets from alternating banks, slamming one after another.
-    hammer("hammer-1", 552, 1, 1.4, 0),
-    hammer("hammer-2", 568, -1, 1.4, 2.1),
-    hammer("hammer-3", 584, 1, 1.4, 4.2),
+    hammer("hammer-1", 652, 1, 1.4, 0),
+    hammer("hammer-2", 668, -1, 1.4, 2.1),
+    hammer("hammer-3", 684, 1, 1.4, 4.2),
     // Piston alley: blocks punch out of both banks in turn, the raft weaves between them.
-    piston("piston-1", 634, 1, 1.5, 0),
-    piston("piston-2", 650, -1, 1.5, 2),
-    piston("piston-3", 666, 1, 1.5, 4),
-    piston("piston-4", 682, -1, 1.5, 6),
+    piston("piston-1", 734, 1, 1.5, 0),
+    piston("piston-2", 750, -1, 1.5, 2),
+    piston("piston-3", 766, 1, 1.5, 4),
+    piston("piston-4", 782, -1, 1.5, 6),
     // The minefield, clear of the bend before it: mines line the right half of the channel, one
     // of them drifting up and down the stream, and the left lane stays open all the way.
-    mine("mine-1", 732, -3.6, 0.8),
-    mine("mine-2", 746, -3.8, 0.8, { range: 3, speed: 0.7, along: true }),
-    mine("mine-3", 760, -3.4, 0.8),
+    mine("mine-1", 832, -3.6, 0.8),
+    mine("mine-2", 846, -3.8, 0.8, { range: 3, speed: 0.7, along: true }),
+    mine("mine-3", 860, -3.4, 0.8),
+    // A second mace over the rapids run to the finish.
+    mace("mace-2", 924, { speed: 1 }),
+  ],
+  // Boost pads on calm runs, each a good 30 m short of the next hazard so the crew can settle
+  // before it, and on the lane that sets up what comes next.
+  boosts: [
+    // Past the log, on the inside of the bend into the third checkpoint.
+    boost(266, 2),
+    // Off the end of the first rapids, mid-channel, toward the hammers.
+    boost(592, 0),
+    // Out of the minefield, inside the last spiked bend, into the rapids to the finish.
+    boost(872, -2),
+    // Under the last mace, a final kick down the rapids to the finish line.
+    boost(940, 0),
   ],
 };
 

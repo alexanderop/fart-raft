@@ -1,8 +1,17 @@
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import canyon from "../../courses/canyon.json";
 import pond from "../../courses/pond.json";
-import { flowSpeed, nearestS, pointAt, rapidsAt, sampleChannel } from "./channel.ts";
 import {
+  channelWalls,
+  flowSpeed,
+  halfWidthAt,
+  nearestS,
+  pointAt,
+  rapidsAt,
+  sampleChannel,
+} from "./channel.ts";
+import {
+  BOOST_SPEED,
   COUNTDOWN_TICKS,
   crewZones,
   CURRENT_SPEED,
@@ -12,6 +21,8 @@ import {
   RESPAWN_BACK,
   RESPAWN_TICKS,
   MAX_CREW,
+  POND_RAMP,
+  RAFT_HULL,
   RIDER_RING,
   TICK_RATE,
   type Zone,
@@ -454,5 +465,145 @@ describe("given a straight channel with rapids", () => {
   it("should reject rapids that are not stretches", () => {
     const broken = { ...straight, channel: { ...straight.channel, rapids: [{ from: "here" }] } };
     expect(() => parseLevel(broken)).toThrow(/bad channel/);
+  });
+});
+
+describe("given a straight channel that opens into a pond", () => {
+  // 200 m straight east, half-width 7, a pond of half-width 18 from 60 m to 120 m.
+  const ponded: LevelData = {
+    name: "ponded",
+    spawn: { x: 0, y: 0, rot: 0 },
+    channel: {
+      halfWidth: 7,
+      points: [
+        { x: -6, y: 0 },
+        { x: 200, y: 0 },
+      ],
+      spikes: [],
+      ponds: [{ from: 66, to: 126, halfWidth: 18 }],
+    },
+    walls: [],
+    checkpoints: [{ x: 195, y: 0, rot: 0, hx: 0.5, hy: 6.7 }],
+    hazards: [],
+  };
+  const ch = ponded.channel!;
+
+  it("should widen from the channel to the pond over the ramp and narrow back after it", () => {
+    expect(halfWidthAt(ch, 30)).toBe(7);
+    expect(halfWidthAt(ch, 66)).toBe(7);
+    expect(halfWidthAt(ch, 66 + POND_RAMP / 2)).toBeGreaterThan(7);
+    expect(halfWidthAt(ch, 66 + POND_RAMP / 2)).toBeLessThan(18);
+    expect(halfWidthAt(ch, 66 + POND_RAMP)).toBe(18);
+    expect(halfWidthAt(ch, 96)).toBe(18);
+    expect(halfWidthAt(ch, 126 - POND_RAMP / 2)).toBeCloseTo(halfWidthAt(ch, 66 + POND_RAMP / 2));
+    expect(halfWidthAt(ch, 160)).toBe(7);
+  });
+
+  it("should leave a channel without ponds at its half-width and bank colliders", () => {
+    const plain = { ...ch, ponds: undefined };
+    expect(halfWidthAt(plain, 96)).toBe(7);
+    expect(channelWalls({ ...ch, ponds: [] })).toEqual(channelWalls(plain));
+  });
+
+  it("should slow the water in the pond, the same flow through more room", () => {
+    expect(flowSpeed(ch, 30)).toBe(CURRENT_SPEED);
+    expect(flowSpeed(ch, 96)).toBeCloseTo((CURRENT_SPEED * 7) / 18);
+  });
+
+  describe("when nobody farts", () => {
+    it("should drift through the pond slower than down the channel", () => {
+      const sim = createSim(ponded, FULL, WILD);
+      const idle = FULL.map(() => IDLE_INPUT);
+      const xAt: number[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 60 * TICK_RATE; t++) {
+        step(sim, idle);
+        xAt.push(snapshot(sim).raft.x);
+      }
+      const time = (from: number) =>
+        (xAt.findIndex((x) => x >= from + 10) - xAt.findIndex((x) => x >= from)) / TICK_RATE;
+      expect(time(90)).toBeGreaterThan(time(20) * 2);
+    });
+  });
+
+  describe("when the crew farts the raft across the pond into its bank", () => {
+    it("should reach past the channel's width but stop at the pond's bank", () => {
+      const sim = createSim({ ...ponded, spawn: { x: 96, y: 0, rot: Math.PI / 2 } }, FULL, WILD);
+      let far = 0;
+      for (let t = 0; t < COUNTDOWN_TICKS + 8 * TICK_RATE; t++) {
+        step(sim, rearFart);
+        far = Math.max(far, snapshot(sim).raft.y);
+      }
+      expect(far).toBeGreaterThan(7 + 2);
+      expect(far).toBeLessThanOrEqual(18 - RAFT_HULL + 0.05);
+    });
+  });
+
+  it("should reject a pond no wider than its channel or running upstream", () => {
+    const narrow = { ...ponded, channel: { ...ch, ponds: [{ from: 66, to: 126, halfWidth: 7 }] } };
+    const backwards = {
+      ...ponded,
+      channel: { ...ch, ponds: [{ from: 126, to: 66, halfWidth: 18 }] },
+    };
+    expect(() => parseLevel(narrow)).toThrow(/bad channel/);
+    expect(() => parseLevel(backwards)).toThrow(/bad channel/);
+  });
+});
+
+describe("given a straight channel with a boost pad on its left lane", () => {
+  // 120 m straight east, a 3 m pad pointing downstream 30 m in, 4 m left of center.
+  const pad = { x: 30, y: 4, rot: 0, hx: 3, hy: 1.4 };
+  const padded: LevelData = {
+    name: "boost",
+    spawn: { x: 0, y: 0, rot: 0 },
+    channel: {
+      halfWidth: 7,
+      points: [
+        { x: -6, y: 0 },
+        { x: 120, y: 0 },
+      ],
+      spikes: [],
+    },
+    walls: [],
+    checkpoints: [{ x: 115, y: 0, rot: 0, hx: 0.5, hy: 6.7 }],
+    hazards: [],
+    boosts: [pad],
+  };
+
+  /** Drift down the current from (0, lat): the fastest speed seen and the events. */
+  function drift(lat: number) {
+    const sim = createSim({ ...padded, spawn: { x: 0, y: lat, rot: 0 } }, FULL, WILD);
+    const idle = FULL.map(() => IDLE_INPUT);
+    const events: SimEvent[] = [];
+    let top = 0;
+    let topY = 0;
+    for (let t = 0; t < COUNTDOWN_TICKS + 20 * TICK_RATE; t++) {
+      events.push(...step(sim, idle));
+      const v = sim.raft.body.linvel();
+      top = Math.max(top, v.x);
+      topY = Math.max(topY, Math.abs(v.y));
+    }
+    return { top, topY, events };
+  }
+
+  describe("when the raft drifts over the pad", () => {
+    it("should speed up along the pad well past the current, once", () => {
+      const { top, topY, events } = drift(pad.y);
+      expect(top).toBeGreaterThan(CURRENT_SPEED + 5);
+      expect(top).toBeLessThanOrEqual(BOOST_SPEED + 0.01);
+      expect(topY).toBeLessThan(0.5);
+      expect(events.filter((e) => e.type === "boost")).toHaveLength(1);
+    });
+  });
+
+  describe("when the raft drifts down the other lane", () => {
+    it("should keep to the current's speed with no boost", () => {
+      const { top, events } = drift(-4);
+      expect(top).toBeLessThan(CURRENT_SPEED + 0.1);
+      expect(events.some((e) => e.type === "boost")).toBe(false);
+    });
+  });
+
+  it("should reject a pad that is not a box", () => {
+    expect(() => parseLevel({ ...padded, boosts: [{ x: 1 }] })).toThrow(/bad boosts/);
   });
 });

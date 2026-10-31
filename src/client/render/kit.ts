@@ -32,7 +32,7 @@ function group(...children: THREE.Object3D[]): THREE.Group {
 
 const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
   raft: () => {
-    const g = group(mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.5, 32), 0xffd23f, 0.25));
+    const g = group(mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.5, 32), 0x8fd45a, 0.25));
     const seats = [
       [-1, 0.8],
       [-1, -0.8],
@@ -53,50 +53,50 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
     return g;
   },
   spinner: () => {
-    const m = mesh(new THREE.CylinderGeometry(1, 1, 2, 12), 0x8d5524);
+    const m = mesh(new THREE.CylinderGeometry(1, 1, 2, 12), 0xa62fc0);
     m.rotation.z = Math.PI / 2;
     return group(m);
   },
   // Half-length 2.4 along x, radius 1: scaled (hx / 2.4, hy, hy).
   log: () => {
-    const m = mesh(new THREE.CylinderGeometry(0.8, 0.8, 4.8, 14), 0x3b2736, 0.8);
+    const m = mesh(new THREE.CylinderGeometry(0.8, 0.8, 4.8, 14), 0x9a6234, 0.8);
     m.rotation.z = Math.PI / 2;
     return group(m);
   },
   // Arm along +x from the axle (origin, 1.2 up) to a drum 6 m out, modelled down.
   hammer: () => {
-    const arm = mesh(new THREE.BoxGeometry(6, 0.4, 0.4), 0x3b2736, 1.2);
+    const arm = mesh(new THREE.BoxGeometry(6, 0.4, 0.4), 0x9a6234, 1.2);
     arm.position.x = 3;
-    const head = mesh(new THREE.CylinderGeometry(1.2, 1.2, 3, 16), 0x7b2fb0, 1.2);
+    const head = mesh(new THREE.CylinderGeometry(1.2, 1.2, 3, 16), 0xa62fc0, 1.2);
     head.rotation.x = Math.PI / 2;
     head.position.x = 6;
     return group(arm, head);
   },
-  hammer_post: () => group(mesh(new THREE.BoxGeometry(1, 1.8, 2.2), 0x5a2d82, 0.9)),
+  hammer_post: () => group(mesh(new THREE.BoxGeometry(1, 1.8, 2.2), 0x3c3f46, 0.9)),
   // Half-extents 1 × 1, 1.4 tall: scaled (hx, hy, 1).
-  piston: () => group(mesh(new THREE.BoxGeometry(2, 1.4, 2), 0x7b2fb0, 0.7)),
+  piston: () => group(mesh(new THREE.BoxGeometry(2, 1.4, 2), 0x3c3f46, 0.7)),
   // 1 m along −x: stretched to the bank.
   piston_rod: () => {
-    const m = mesh(new THREE.CylinderGeometry(0.3, 0.3, 1, 10), 0xe9dfc4, 0.7);
+    const m = mesh(new THREE.CylinderGeometry(0.3, 0.3, 1, 10), 0x5a5e66, 0.7);
     m.rotation.z = Math.PI / 2;
     m.position.x = -0.5;
     return group(m);
   },
   // 2 m along x, half-thickness 0.6 across, spike tips at the origin: scaled (hx, 1, hy / 0.6), raised by the client.
-  dropgate_bar: () => group(mesh(new THREE.BoxGeometry(2, 1, 1.2), 0x3b2736, 0.9)),
-  dropgate_post: () => group(mesh(new THREE.BoxGeometry(1, 8.6, 1), 0xe9dfc4, 4.3)),
+  dropgate_bar: () => group(mesh(new THREE.BoxGeometry(2, 1, 1.2), 0x3c3f46, 0.9)),
+  dropgate_post: () => group(mesh(new THREE.BoxGeometry(1, 8.6, 1), 0x3c3f46, 4.3)),
   // Radius 1 at the spike tips, scaled uniformly by the mine's radius; the lamp blinks.
   mine: () => {
     const lamp = new THREE.Mesh(
       new THREE.SphereGeometry(0.2, 10, 8),
-      new THREE.MeshLambertMaterial({ color: 0x8be24a, emissive: 0x8be24a }),
+      new THREE.MeshLambertMaterial({ color: 0x9cff4a, emissive: 0x9cff4a }),
     );
     lamp.material.name = "mine_lamp";
     lamp.position.y = 1;
-    return group(mesh(new THREE.SphereGeometry(0.7, 14, 10), 0x2a1b33, 0.35), lamp);
+    return group(mesh(new THREE.SphereGeometry(0.7, 14, 10), 0x2b2d33, 0.35), lamp);
   },
   // Radius 1, scaled uniformly by the bumper's radius.
-  bumper: () => group(mesh(new THREE.SphereGeometry(0.9, 14, 10), 0xf5821f, 0.9)),
+  bumper: () => group(mesh(new THREE.SphereGeometry(0.9, 14, 10), 0xf0509a, 0.9)),
   gate_post: () => group(mesh(new THREE.BoxGeometry(0.4, 8.5, 0.4), 0xedb040, 4.25)),
   gate_bar: () => group(mesh(new THREE.BoxGeometry(2, 0.4, 0.4), 0xedb040)),
   gate_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0xe0502b)),
@@ -104,16 +104,9 @@ const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
   start_sign: () => group(mesh(new THREE.BoxGeometry(6.4, 1.6, 0.2), 0x3fc0b2)),
   // Pivot at the origin end, arm along +x, 2 m long. Scaled (len / 2, 1, 1).
   sweeper: () => {
-    const m = mesh(new THREE.BoxGeometry(2, 0.6, 0.6), 0xd8329a, 0.45);
+    const m = mesh(new THREE.BoxGeometry(2, 0.6, 0.6), 0xa62fc0, 0.45);
     m.position.x = 1;
     return group(m);
-  },
-  // 2 m along x. Spikes point toward local -z (sim +y, the channel side).
-  spike_strip: () => {
-    const spike = mesh(new THREE.ConeGeometry(0.1, 0.32, 6), 0xfffdf4, 0.2);
-    spike.rotation.x = -Math.PI / 2;
-    spike.position.z = -0.35;
-    return group(mesh(new THREE.BoxGeometry(2, 0.5, 0.4), 0xb02fa8, 0.25), spike);
   },
   tree_round: () =>
     group(

@@ -1,6 +1,7 @@
 import { Cause, Context, Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
+import type { Look } from "../look.ts";
 import type { Difficulty, SeatInput } from "../sim/types.ts";
 import {
   RaftRpcs,
@@ -42,6 +43,8 @@ export type Connection = {
   /** Host only: leave the lobby and start the race. */
   start(): void;
   restart(): void;
+  /** Changes this player's look; everyone sees it on the next roster. */
+  setLook(look: Look): void;
   /** Frames that arrived before the handler was set are delivered first. */
   onFrame(handler: (frame: Frame) => void): void;
   /** The seat is lost: the connection dropped or the server ended the stream. Not called after `close()`. */
@@ -93,13 +96,14 @@ export async function createRoom(
 }
 
 /**
- * Joins room `code` as `name`. Resolves once the server has given us a seat and the room's
+ * Joins room `code` as `name` in `look`. Resolves once the server has given us a seat and the room's
  * roster. Rejects if the room is full or gone, or the server is unreachable.
  */
 export async function connect(
   url: string,
   code: string,
   name: string,
+  look: Look,
   timeoutMs = 5000,
 ): Promise<Connection> {
   const runtime = ManagedRuntime.make(clientLayer(url));
@@ -125,7 +129,7 @@ export async function connect(
 
   const client = await runtime.runPromise(Effect.service(RaftClient));
   runtime.runFork(
-    client.Join({ code, name }).pipe(
+    client.Join({ code, name, look }).pipe(
       Stream.runForEach((msg) =>
         Effect.sync(() =>
           ServerMsg.match(msg, {
@@ -184,6 +188,10 @@ export async function connect(
     },
     restart() {
       runtime.runFork(client.Restart(seat).pipe(Effect.ignore));
+    },
+    setLook(next) {
+      if (closed) return;
+      runtime.runFork(client.SetLook({ ...seat, look: next }).pipe(Effect.ignore));
     },
     onFrame(handler) {
       frameHandler = handler;

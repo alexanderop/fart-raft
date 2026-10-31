@@ -1,20 +1,9 @@
 import * as THREE from "three";
+import { LOOK_COLORS } from "../../look.ts";
 import { RAFT_HULL, RAFT_RADIUS, type Zone } from "../../sim/constants.ts";
 
-/**
- * One color per seat, shared by the zone marks, the name tags and the tint of riders 4–7. Seats
- * 4–7 (online crews only) stay clear of the slime-green water and of the first four.
- */
-export const SEAT_COLORS = [
-  "#ff8a3d",
-  "#3d9bff",
-  "#b07cff",
-  "#ffd23f",
-  "#ff4fb0",
-  "#5ee9ff",
-  "#b8f53b",
-  "#ff4a4a",
-] as const;
+/** One color per seat until its player picks one: the first eight look colors. */
+export const SEAT_COLORS = LOOK_COLORS.slice(0, 8);
 
 const DECK_Y = 0.41; // just above the kit raft's floor (top ≈ 0.39)
 const DECK_EDGE = RAFT_RADIUS - 0.3; // where the deck meets the ring tube
@@ -26,11 +15,14 @@ const BAND_OUT = RAFT_HULL;
 const flat = <T extends THREE.BufferGeometry>(geo: T): T => geo.rotateX(-Math.PI / 2);
 
 /**
- * Each rider's stretch of the ring: a colored band on the water where it wades, plus a tinted
+ * Each rider's stretch of the ring in its color (`colors[i]`, else the seat color): a colored band on the water where it wades, plus a tinted
  * wedge of deck, with white dividers between seats. A child of the raft, so it bobs and turns
  * along. A solo rider owns the whole ring: no marks.
  */
-export function createZoneMarks(zones: readonly Zone[]): THREE.Group {
+export function createZoneMarks(
+  zones: readonly Zone[],
+  colors: readonly string[] = SEAT_COLORS,
+): THREE.Group {
   const group = new THREE.Group();
   group.name = "zones";
   if (zones.length < 2) return group;
@@ -39,7 +31,7 @@ export function createZoneMarks(zones: readonly Zone[]): THREE.Group {
   zones.forEach((zone, i) => {
     const start = zone.center - zone.half;
     const len = zone.half * 2;
-    const color = SEAT_COLORS[i];
+    const color = colors[i] ?? SEAT_COLORS[i % SEAT_COLORS.length];
     const tint = (opacity: number) =>
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
 

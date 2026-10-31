@@ -1,7 +1,7 @@
 // Generates courses/graveyard.json. Rerun after editing the spec: `pnpm graveyard`.
 // A spooky course on wide, slow pools: octagon islands (thick `walls`) split the water into
 // lanes, and the new hazards guard them: rolling spiked logs, pumpkin bumpers, one witch's
-// mill, two drop gates and a few mines before the rapids. Everything is placed by arc length along the channel (see scripts/course.ts).
+// mill, two drop gates, a few mines before the rapids and a giant mace swinging over them. Everything is placed by arc length along the channel (see scripts/course.ts).
 import type { Box, Channel, HazardDef, LevelData } from "../src/sim/types.ts";
 import { channelKit, round, writeCourse } from "./course.ts";
 
@@ -25,7 +25,8 @@ const channel: Channel = {
   rapids: [{ from: 405, to: 470 }],
 };
 
-const { samples, length, at, across, gate, outerBends, dropgate, mine } = channelKit(channel);
+const { samples, length, at, across, gate, outerBends, dropgate, mine, mace, boost } =
+  channelKit(channel);
 
 /** An octagon island of radius `r` at arc length `s`, `lat` m left of the centerline. */
 function island(s: number, lat: number, r: number, turn = 0.4): Box {
@@ -91,7 +92,12 @@ const level: LevelData = {
     mine("mine-2", 390, -5),
     mine("mine-3", 398, 0, 1, { range: 6, speed: 0.5 }),
     mine("mine-4", 398, 9, 0.9, { range: 2, speed: 0.8, phase: 1 }),
+    // A giant mace swings across the rapids, bank to bank: shoot under it while it hangs high.
+    mace("mace-1", 452, { speed: 1.1, r: 1.6 }),
   ],
+  // Boost pads: out of the pumpkins' gap toward the crypt, between the crypt's islands, and a
+  // last one past the mace for the sprint to the finish.
+  boosts: [boost(122, -3), boost(222, -2), boost(465, 0)],
 };
 
 writeCourse("graveyard", level);

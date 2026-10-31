@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { MAX_CREW, TICK_RATE } from "../../sim/constants.ts";
 import type { LevelData, Pose, SimEvent, Snapshot } from "../../sim/types.ts";
 import { clamp, damp, spring, stepSpring, wrapAngle, type Spring } from "./spring.ts";
-import { SEAT_COLORS } from "./zones.ts";
+import { defaultLook, lookColor, type Look } from "../../look.ts";
+import { bodyTemplate, dress, tinted, type Dressed } from "./outfits.ts";
 
 /**
  * Drives the kit's rider rigs (body → head, arm_l, arm_r) from SimEvents + Snapshots only.
@@ -11,6 +12,8 @@ import { SEAT_COLORS } from "./zones.ts";
 export type RiderAnimator = {
   onEvent(e: SimEvent, now: number): void;
   update(dt: number, now: number, prev: Snapshot, curr: Snapshot, alpha: number, pose: Pose): void;
+  /** One look per rider: a changed one swaps that rider's animal, color and costume. */
+  setLooks(looks: readonly Look[]): void;
   reset(): void;
 };
 
@@ -60,61 +63,79 @@ type Rider = {
   nextBlink: number;
 };
 
-/**
- * A copy of `m` with its color turned to `hue`, saturated enough to read (a dusty purple hippo
- * would otherwise come out grey). Eyes, teeth and trim are grey and stay so.
- */
-function tinted(m: THREE.Material, hue: number): THREE.Material {
-  const c = m.clone();
-  if ("color" in c && c.color instanceof THREE.Color) {
-    const hsl = c.color.getHSL({ h: 0, s: 0, l: 0 });
-    if (hsl.s > 0.15) c.color.setHSL(hue, Math.max(hsl.s, 0.65), hsl.l);
-  }
-  return c;
-}
+/** The parts of one rider rig the animator moves. */
+export type Rig = Pick<Rider, "body" | "head" | "armL" | "armR">;
 
-/**
- * One rider rig per seat, in seat order. The kit ships four animals; seats beyond them ride a
- * copy of animal `i % kit`, renamed (rider_i, rider_i_head, …) and with its colored materials
- * turned to the seat's hue, so an eight-crew shows eight distinct riders.
- */
-function riderBodies(raft: THREE.Object3D): THREE.Object3D[] {
-  const bodies: THREE.Object3D[] = [];
+/** The kit's rider rigs (`rider_0`, `rider_1`, …) under `raft`, in seat order. */
+export function kitRiders(raft: THREE.Object3D): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
   for (let body = raft.getObjectByName("rider_0"); body;) {
-    bodies.push(body);
-    body = raft.getObjectByName(`rider_${bodies.length}`);
+    out.push(body);
+    body = raft.getObjectByName(`rider_${out.length}`);
   }
-  const kit = bodies.length;
-  if (kit === 0) return bodies;
-  for (let i = kit; i < MAX_CREW; i++) {
-    const from = bodies[i % kit]!;
-    const copy = from.clone(true);
-    const hue = new THREE.Color(SEAT_COLORS[i]).getHSL({ h: 0, s: 0, l: 0 }).h;
-    copy.traverse((o) => {
-      o.name = o.name.replace(`rider_${i % kit}`, `rider_${i}`);
-      if (!(o instanceof THREE.Mesh)) return;
-      o.material = Array.isArray(o.material)
-        ? o.material.map((m: THREE.Material) => tinted(m, hue))
-        : tinted(o.material, hue);
-    });
-    from.parent!.add(copy);
-    bodies.push(copy);
-  }
-  return bodies;
+  return out;
 }
 
 /**
- * Rigs every kit rider; each frame shows one per rider in the snapshot and hides the rest, so the
- * crew size can change between races (online restarts).
+ * Rider `i` in `look`: a copy of the kit rider for its animal, renamed (rider_i, rider_i_head,
+ * …) and, unless it already is that color, its colored materials tinted. Hidden until shown.
+ */
+export function cloneRig(templates: readonly THREE.Object3D[], i: number, look: Look): Rig {
+  const { index, tint } = bodyTemplate(look);
+  const t = templates[index] ? index : i % Math.max(1, templates.length);
+  const template = templates[t];
+  if (!template)
+    return { body: new THREE.Group(), head: undefined, armL: undefined, armR: undefined };
+  const body = template.clone(true);
+  body.traverse((o) => {
+    o.name = o.name.replace(`rider_${t}`, `rider_${i}`);
+    if (!tint || !(o instanceof THREE.Mesh)) return;
+    o.material = Array.isArray(o.material)
+      ? o.material.map((m: THREE.Material) => tinted(m, lookColor(look)))
+      : tinted(o.material, lookColor(look));
+  });
+  body.visible = false;
+  return {
+    body,
+    head: body.getObjectByName(`rider_${i}_head`),
+    armL: body.getObjectByName(`rider_${i}_arm_l`),
+    armR: body.getObjectByName(`rider_${i}_arm_r`),
+  };
+}
+
+/**
+ * Rigs a rider per possible seat; each frame shows one per rider in the snapshot and hides the
+ * rest, so the crew size can change between races (online restarts). The kit's riders are kept
+ * hidden as templates: every rider is a copy of the animal its look picks, tinted to its color
+ * and dressed in its hat, outfit and gadget (`setLooks`).
  */
 export function createRiderAnimator(raft: THREE.Object3D, level: LevelData): RiderAnimator {
-  const riders: Rider[] = riderBodies(raft).map((body, i) => {
+  const templates = kitRiders(raft);
+  // Kept in the graph, hidden, so the scene's dispose frees them with everything else.
+  const shelf = new THREE.Group();
+  shelf.visible = false;
+  raft.add(shelf);
+  for (const t of templates) shelf.add(t);
+  const rest: Rest = templates[0]
+    ? { pos: templates[0].position.clone(), rotY: templates[0].rotation.y }
+    : { pos: new THREE.Vector3(), rotY: 0 };
+
+  const worn: { key: string; dressed: Dressed; tinted: boolean }[] = [];
+
+  const rigFor = (i: number, look: Look) => cloneRig(templates, i, look);
+
+  const riders: Rider[] = Array.from({ length: MAX_CREW }, (_, i) => {
+    const look = defaultLook(i);
+    const rig = rigFor(i, look);
+    raft.add(rig.body);
+    worn[i] = {
+      key: JSON.stringify(look),
+      dressed: dress(rig.body, rig.head, look),
+      tinted: bodyTemplate(look).tint,
+    };
     return {
-      body,
-      head: body.getObjectByName(`rider_${i}_head`),
-      armL: body.getObjectByName(`rider_${i}_arm_l`),
-      armR: body.getObjectByName(`rider_${i}_arm_r`),
-      rest: { pos: body.position.clone(), rotY: body.rotation.y },
+      ...rig,
+      rest,
       phase: i * 1.7 + 0.4,
       lastFart: -10,
       exhaust: Math.PI,
@@ -142,6 +163,26 @@ export function createRiderAnimator(raft: THREE.Object3D, level: LevelData): Rid
       nextBlink: 1 + Math.random() * 4,
     };
   });
+
+  /** Swaps rider `i` onto a new rig when its look changed; animation state carries over. */
+  function wear(i: number, look: Look): void {
+    const r = riders[i];
+    const old = worn[i];
+    const key = JSON.stringify(look);
+    if (!r || !old || old.key === key) return;
+    old.dressed.remove();
+    r.body.removeFromParent();
+    if (old.tinted) {
+      r.body.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+      });
+    }
+    const rig = rigFor(i, look);
+    raft.add(rig.body);
+    Object.assign(r, rig);
+    worn[i] = { key, dressed: dress(rig.body, rig.head, look), tinted: bodyTemplate(look).tint };
+  }
 
   let lastCountdownSecond = -1;
   let lastTick = 0;
@@ -385,8 +426,16 @@ export function createRiderAnimator(raft: THREE.Object3D, level: LevelData): Rid
       const reach = REACH * (1 - cheer) * (1 - 0.85 * stagger);
       if (r.armL) r.armL.rotation.set(angL * 0.4, 0, reach + cheer * 0.2, "XYZ");
       if (r.armR) r.armR.rotation.set(-angR * 0.4, 0, reach + cheer * 0.2, "XYZ");
+      worn[i]?.dressed.update(now, dt);
     });
   }
 
-  return { onEvent, update, reset };
+  return {
+    onEvent,
+    update,
+    reset,
+    setLooks(looks) {
+      looks.forEach((look, i) => wear(i, look));
+    },
+  };
 }

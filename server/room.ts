@@ -17,6 +17,7 @@ import {
   type CourseName,
   type Roster,
 } from "../src/net/protocol.ts";
+import { defaultLook, type Look } from "../src/look.ts";
 import { crewZones, MAX_CREW, TICK_RATE } from "../src/sim/constants.ts";
 import { createSim, snapshot, step } from "../src/sim/sim.ts";
 import {
@@ -28,10 +29,20 @@ import {
   type Snapshot,
 } from "../src/sim/types.ts";
 
-type Human = { kind: "human"; name: string; token: string; joined: number; input: SeatInput };
+type Human = {
+  kind: "human";
+  name: string;
+  look: Look;
+  token: string;
+  joined: number;
+  input: SeatInput;
+};
 type Seat = { kind: "empty" } | Human;
-/** Who drives one rider for a whole race. Matched to a seat by token, so a leaver's rider idles. */
-type Rider = { token: string; name: string };
+/**
+ * Who drives one rider for a whole race. Matched to a seat by token, so a leaver's rider idles
+ * in the look it started the race with.
+ */
+type Rider = { token: string; name: string; look: Look };
 
 const NANOS = 1_000_000_000n;
 const RATE = BigInt(TICK_RATE);
@@ -55,12 +66,14 @@ const everyStep = (tick: Effect.Effect<void>) =>
 export interface Room {
   readonly code: string;
   /** The stream's lifetime is the seat lease: when it ends or is interrupted the seat opens up. */
-  readonly join: (name: string) => Stream.Stream<ServerMsg, RoomFull>;
+  readonly join: (name: string, look?: Look) => Stream.Stream<ServerMsg, RoomFull>;
   readonly sendInput: (token: string, input: SeatInput) => Effect.Effect<void>;
   /** Only the host's token starts the race; anything else is ignored. */
   readonly start: (token: string) => Effect.Effect<void>;
   /** Any seated human: a new race with everyone seated now, spectators included. */
   readonly restart: (token: string) => Effect.Effect<void>;
+  /** A seated human's new look: on their seat, and on their rider if they are racing. */
+  readonly setLook: (token: string, look: Look) => Effect.Effect<void>;
   readonly humans: Effect.Effect<number>;
 }
 
@@ -131,12 +144,14 @@ export const makeRoom = (
       code,
       course,
       difficulty,
-      seats: table.map((s) => (s.kind === "human" ? s.name : null)),
+      seats: table.map((s) => (s.kind === "human" ? { name: s.name, look: s.look } : null)),
       host: hostOf(table),
       started: current !== undefined,
       crew: (current?.crew ?? []).map((r) => {
         const seat = seatOf(table, r.token);
-        return { name: r.name, seat: seat < 0 ? null : seat };
+        const human = table[seat];
+        const look = human?.kind === "human" ? human.look : r.look;
+        return { name: r.name, seat: seat < 0 ? null : seat, look };
       }),
     });
     const roster = yield* SubscriptionRef.make(rosterOf(yield* Ref.get(seats), undefined));
@@ -160,15 +175,18 @@ export const makeRoom = (
 
     /** Everyone seated right now, in seat order. */
     const crewOf = (table: readonly Seat[]): Rider[] =>
-      table.flatMap((s) => (s.kind === "human" ? [{ token: s.token, name: s.name }] : []));
+      table.flatMap((s) =>
+        s.kind === "human" ? [{ token: s.token, name: s.name, look: s.look }] : [],
+      );
 
-    const claimSeat = (name: string, token: string) =>
+    const claimSeat = (name: string, look: Look | undefined, token: string) =>
       Ref.modify(seats, (table) => {
         const free = table.findIndex((s) => s.kind === "empty");
         if (free < 0) return [Option.none<number>(), table] as const;
         const human: Human = {
           kind: "human",
           name: cleanName(name, free),
+          look: look ?? defaultLook(free),
           token,
           joined: joins++,
           input: IDLE_INPUT,
@@ -184,11 +202,11 @@ export const makeRoom = (
     const releaseSeat = (seat: number) =>
       Ref.update(seats, (table) => table.with(seat, empty)).pipe(Effect.andThen(publishRoster));
 
-    const join = (name: string) =>
+    const join = (name: string, look?: Look) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const token = crypto.randomUUID();
-          const seat = yield* Effect.acquireRelease(claimSeat(name, token), releaseSeat);
+          const seat = yield* Effect.acquireRelease(claimSeat(name, look, token), releaseSeat);
           const subscription = yield* PubSub.subscribe(frames);
           const rosters = SubscriptionRef.changes(roster).pipe(
             Stream.map((r) => ServerMsg.cases.Roster.make({ roster: r })),
@@ -213,24 +231,42 @@ export const makeRoom = (
       const table = yield* Ref.get(seats);
       const host = hostOf(table);
       if (host === null || seatOf(table, token) !== host) return;
-      if ((yield* Ref.get(race)) !== undefined) return;
-      yield* Ref.set(race, newRace(level, difficulty, crewOf(table)));
-      yield* publishRoster;
+      // One modify: a second Start can never swap in a race between the check and the set.
+      const started = yield* Ref.modify(race, (current) =>
+        current === undefined
+          ? ([true, newRace(level, difficulty, crewOf(table))] as const)
+          : ([false, current] as const),
+      );
+      if (started) yield* publishRoster;
     });
 
     const restart = Effect.fn("Room.restart")(function* (token: string) {
       const table = yield* Ref.get(seats);
       if (seatOf(table, token) < 0) return;
-      const old = yield* Ref.get(race);
+      // One modify: two Restarts each get their own old race, so none is freed twice.
+      const old = yield* Ref.modify(race, (current) =>
+        current === undefined
+          ? ([undefined, current] as const)
+          : ([current, newRace(level, difficulty, crewOf(table))] as const),
+      );
       if (!old) return;
-      yield* Ref.set(race, newRace(level, difficulty, crewOf(table)));
       old.free();
       yield* publishRoster;
+    });
+
+    const setLook = Effect.fn("Room.setLook")(function* (token: string, look: Look) {
+      const changed = yield* Ref.modify(seats, (table) => {
+        const seat = seatOf(table, token);
+        const human = table[seat];
+        if (human?.kind !== "human") return [false, table] as const;
+        return [true, table.with(seat, { ...human, look })] as const;
+      });
+      if (changed) yield* publishRoster;
     });
 
     const humans = Ref.get(seats).pipe(
       Effect.map((table) => table.filter((s) => s.kind === "human").length),
     );
 
-    return { code, join, sendInput, start, restart, humans };
+    return { code, join, sendInput, start, restart, setLook, humans };
   });

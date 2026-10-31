@@ -394,6 +394,23 @@ export function createAudio(volume: VolumeStore) {
     track(thud);
   }
 
+  /** Boost pad: a rising whoosh of filtered noise with a zippy sweep under it. */
+  function boost() {
+    if (!ctx || !allow("boost", 0.3)) return;
+    const t = ctx.currentTime;
+    const length = 0.55;
+    const air = noiseSource(ctx, t, length);
+    const band = ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.Q.value = 1.4;
+    band.frequency.setValueAtTime(350, t);
+    band.frequency.exponentialRampToValueAtTime(3200, t + length * 0.7);
+    air.connect(band).connect(envelope(ctx, t, 0.75, 0.06, length, sfx));
+    const zip = osc(ctx, "triangle", t, 0.3, midi(60), midi(84));
+    zip.connect(envelope(ctx, t, 0.18, 0.01, 0.3, sfx));
+    track(air);
+  }
+
   /** Back at the gate: a quick rising "bloop", like popping up out of the water. */
   function respawn() {
     if (!ctx || !allow("respawn", 0.3)) return;
@@ -501,6 +518,9 @@ export function createAudio(volume: VolumeStore) {
           break;
         case "respawn":
           respawn();
+          break;
+        case "boost":
+          boost();
           break;
         case "checkpoint":
           checkpoint();

@@ -20,6 +20,7 @@ import {
   configToSearch,
   defaultServerUrl,
   launchFromUrl,
+  loadPlayers,
   showMenu,
   type Launch,
 } from "./ui/menu.ts";
@@ -80,7 +81,11 @@ export function startApp(host: HTMLElement): void {
     const { config } = launch;
     const suffix = course === "canyon" ? "" : `&course=${course}`;
     history.replaceState(null, "", configToSearch(config) + suffix);
-    return { kind: "racing", level, session: localSession(level, config, heading, physics) };
+    return {
+      kind: "racing",
+      level,
+      session: localSession(level, config, loadPlayers(), heading, physics),
+    };
   }
 
   function enter(state: AppState, gen: number): void {

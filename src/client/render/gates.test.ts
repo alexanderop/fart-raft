@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vite-plus/test";
-import { fitWidth, portraitness } from "./chaseCamera.ts";
+import { fitWidth, framing } from "./chaseCamera.ts";
 import { gateBlocksView } from "./gates.ts";
 
 /** A gate's bar-and-sign box across a channel along sim +x: 1 m thick, 14 m wide, 4.5 to 8.3 m up. */
@@ -13,12 +13,11 @@ function gateAt(x: number): THREE.Vector3[] {
   );
 }
 
-/** Framed like chaseCamera.ts: landscape 10 m behind and 11.5 m up, portrait 5 m behind and 18.5 m up. */
+/** Framed at rest like chaseCamera.ts, behind a raft heading along sim +x. */
 function chaseCamera(raftX: number, aspect = 16 / 10): THREE.PerspectiveCamera {
-  const tall = portraitness(aspect);
-  const camera = new THREE.PerspectiveCamera(fitWidth(52, aspect), aspect, 0.1, 700);
-  const lookAhead = 5 + 9 * tall;
-  camera.position.set(raftX + lookAhead - (15 + 4 * tall), 11.5 + 7 * tall, 0);
+  const { fov, back, height, lookAhead } = framing(aspect);
+  const camera = new THREE.PerspectiveCamera(fitWidth(fov, aspect), aspect, 0.1, 700);
+  camera.position.set(raftX + lookAhead - back, height, 0);
   camera.lookAt(raftX + lookAhead, 0, 0);
   camera.updateMatrixWorld();
   return camera;

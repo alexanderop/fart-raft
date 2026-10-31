@@ -1,9 +1,11 @@
 import type RAPIER from "@dimforge/rapier2d-compat";
 import type { Box, HazardDef } from "../types.ts";
 import { bumper } from "./bumper.ts";
+import { doublegate } from "./doublegate.ts";
 import { dropgate } from "./dropgate.ts";
 import { hammer } from "./hammer.ts";
 import { log } from "./log.ts";
+import { mace } from "./mace.ts";
 import { mine } from "./mine.ts";
 import { piston } from "./piston.ts";
 import { cross, spinner } from "./spinner.ts";
@@ -46,7 +48,9 @@ const KINDS: Record<HazardDef["kind"], HazardKind> = {
   hammer,
   piston,
   dropgate,
+  doublegate,
   mine,
+  mace,
 };
 
 /** Every hazard kind a course may use: the level validator checks against this. */

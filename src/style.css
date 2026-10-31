@@ -1,9 +1,9 @@
 @import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap");
 
 :root {
-  --hud-bg: #e8701a;
+  --hud-bg: #2a8fd6;
   --hud-fg: #fff;
-  --outline: #2a1440;
+  --outline: #1d3a57;
   --gas: #8ed14a;
   /* Notches and home indicators (viewport-fit=cover). */
   --safe-t: env(safe-area-inset-top, 0px);
@@ -25,7 +25,7 @@ body {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
-  background: #2b1a4d;
+  background: #9fd8ef;
   font-family:
     "Fredoka", "Baloo 2", ui-rounded, "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif;
 }
@@ -529,7 +529,7 @@ button {
   overscroll-behavior: contain;
   padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b))
     calc(16px + var(--safe-l));
-  background: linear-gradient(180deg, #0d0820 0%, #2b1a4d 55%, #e8701a 100%);
+  background: linear-gradient(180deg, #8fd3f4 0%, #b8e6f7 55%, #ffd9b0 100%);
   z-index: 10;
 }
 
@@ -1349,5 +1349,233 @@ button {
 
   .vol-pop {
     width: min(300px, calc(100vw - 92px - var(--safe-l) - var(--safe-r)));
+  }
+}
+
+/* ── Wardrobe: animal, color and costume ───────────────────────────────── */
+
+.menu-seats li.menu-seat {
+  padding: 0;
+  border-left: 6px solid var(--c, var(--hud-bg));
+}
+
+.menu-seats li.menu-seat.lobby-player,
+.menu-seat > .menu-dress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  text-align: left;
+}
+
+.menu-dress {
+  width: 100%;
+  min-height: 48px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: inherit;
+  cursor: pointer;
+}
+
+.menu-dress:hover,
+.menu-dress:focus-visible {
+  background: #dff0fb;
+  outline: none;
+}
+
+.menu-dress small {
+  display: block;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.menu-dress > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.menu-dress-badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--c, var(--hud-bg));
+  box-shadow: 0 0 0 2px var(--outline);
+  font-size: 15px;
+  letter-spacing: -0.15em;
+}
+
+.menu-dress-edit {
+  flex: none;
+  font-size: 18px;
+}
+
+.lobby-dress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 17px;
+}
+
+.wardrobe {
+  z-index: 30;
+  background: rgb(29 58 87 / 0.55);
+}
+
+.wardrobe-card {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+
+.wardrobe-title {
+  margin: 0;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--gas);
+  -webkit-text-stroke: 5px var(--outline);
+  paint-order: stroke fill;
+}
+
+.wardrobe-body {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.wardrobe-stage {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.wardrobe-preview {
+  height: 280px;
+  border-radius: 20px;
+  background: radial-gradient(circle at 50% 70%, #ffe6c7 0%, #b8e6f7 70%);
+  box-shadow: inset 0 0 0 3px var(--outline);
+  overflow: hidden;
+}
+
+.wardrobe-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.wardrobe-random {
+  margin-top: 0;
+  font-size: 17px;
+}
+
+.wardrobe-pick {
+  display: grid;
+  gap: 6px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.wardrobe-pick .menu-label {
+  margin: 6px 0 0;
+}
+
+.wardrobe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wardrobe-chips button {
+  min-height: 36px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--outline);
+  background: #eef7fd;
+  border: 2px solid var(--outline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.wardrobe-chips button[aria-checked="true"],
+.wardrobe-chips button.on {
+  background: var(--hud-bg);
+  color: #fff;
+}
+
+.wardrobe-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wardrobe-colors button {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 3px solid var(--outline);
+  background: var(--c);
+  cursor: pointer;
+}
+
+.wardrobe-colors button[aria-checked="true"] {
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 6px var(--outline);
+}
+
+.wardrobe-chips button:focus-visible,
+.wardrobe-colors button:focus-visible {
+  outline: 3px solid #ffb347;
+  outline-offset: 2px;
+}
+
+.wardrobe-actions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.wardrobe-actions .lobby-back {
+  margin: 0;
+}
+
+.wardrobe-done {
+  font-size: 22px;
+  padding: 10px;
+}
+
+@media (max-width: 620px) {
+  .wardrobe-body {
+    grid-template-columns: 1fr;
+  }
+
+  .wardrobe-stage {
+    position: static;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+  }
+
+  .wardrobe-preview {
+    height: 190px;
+  }
+
+  .wardrobe-pick {
+    max-height: none;
+    overflow: visible;
   }
 }

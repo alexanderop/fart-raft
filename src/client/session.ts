@@ -8,7 +8,8 @@ import { FRAME_TICKS, riderOf, type Roster } from "../net/protocol.ts";
 import { crewZones, STEP } from "../sim/constants.ts";
 import { createSim, snapshot, step } from "../sim/sim.ts";
 import type { LevelData, SimEvent, Snapshot } from "../sim/types.ts";
-import { crewSize, type GameConfig } from "./ui/menu.ts";
+import { crewSize, type GameConfig, type LocalPlayer } from "./ui/menu.ts";
+import { defaultLook, type Look } from "../look.ts";
 
 /** What the renderer draws this frame: two snapshots to blend between, and what happened since the last frame. */
 export type FrameView = { prev: Snapshot; curr: Snapshot; alpha: number; events: SimEvent[] };
@@ -21,6 +22,8 @@ export type FrameView = { prev: Snapshot; curr: Snapshot; alpha: number; events:
 export type Session = {
   /** One name tag per rider. */
   seatLabels(): readonly string[];
+  /** One look per rider: animal, color and costume. */
+  seatLooks(): readonly Look[];
   /** Once per fixed client tick (60 Hz). */
   tick(): void;
   restart(): void;
@@ -50,22 +53,37 @@ function rumbleFor(
   }
 }
 
-/** `physics` is `initPhysics()`, started early so Rapier loads while the menu is up. */
+/**
+ * `physics` is `initPhysics()`, started early so Rapier loads while the menu is up. `players[i]`
+ * names and dresses human seat `i`; bots ride in their seat's default look.
+ */
 export async function localSession(
   level: LevelData,
   config: GameConfig,
+  players: readonly LocalPlayer[],
   heading: Heading,
   physics: Promise<void>,
 ): Promise<Session> {
   await physics;
   const crew = crewZones(crewSize(config));
+  const looks = crew.map((_, i) =>
+    i < config.humans ? (players[i]?.look ?? defaultLook(i)) : defaultLook(i),
+  );
 
   let sim = createSim(level, crew, { difficulty: config.difficulty });
   let prev = snapshot(sim);
   let curr = prev;
   let pending: SimEvent[] = [];
   // Bots read the latest snapshot, the same data a server broadcasts.
-  const driver = createSeatDriver(config.humans, crew, () => curr, level, heading, gamepads);
+  const driver = createSeatDriver(
+    config.humans,
+    crew,
+    () => curr,
+    level,
+    heading,
+    gamepads,
+    players.map((p) => p.name),
+  );
   driver.update();
   let startWasDown = false;
 
@@ -78,6 +96,7 @@ export async function localSession(
 
   return {
     seatLabels: driver.labels,
+    seatLooks: () => looks,
     tick() {
       driver.update();
       // Start on any seated pad restarts, like R.
@@ -103,6 +122,8 @@ export async function localSession(
     },
   };
 }
+
+const looksOf = (roster: Roster) => roster.crew.map((c) => c.look);
 
 /** Wire frames come every FRAME_TICKS sim ticks, so a snapshot is blended in over that long. */
 const FRAME_MS = FRAME_TICKS * STEP * 1000;
@@ -134,9 +155,11 @@ export async function onlineSession(
   const labelsOf = (roster: Roster) =>
     roster.crew.map((c) => (c.seat === conn.seat ? "You" : c.name));
   let labels = labelsOf(conn.roster());
+  let looks = looksOf(conn.roster());
   let rider = riderOf(conn.roster(), conn.seat);
   const stopRoster = conn.onRoster((roster) => {
     labels = labelsOf(roster);
+    looks = looksOf(roster);
     rider = riderOf(roster, conn.seat);
   });
 
@@ -164,6 +187,7 @@ export async function onlineSession(
 
   return {
     seatLabels: () => labels,
+    seatLooks: () => looks,
     tick() {
       gamepads.poll();
       conn.send(source.read());

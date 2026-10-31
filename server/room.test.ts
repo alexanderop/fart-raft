@@ -3,6 +3,7 @@ import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 import pond from "../courses/pond.json";
 import { RoomFull, RoomNotFound, ServerMsg, type Frame } from "../src/net/protocol.ts";
+import { defaultLook } from "../src/look.ts";
 import { MAX_CREW } from "../src/sim/constants.ts";
 import { parseLevel } from "../src/sim/level.ts";
 import type { SeatInput } from "../src/sim/types.ts";
@@ -12,8 +13,17 @@ import { cleanName, type Room } from "./room.ts";
 const level = parseLevel(pond);
 const COURSES = { canyon: level, graveyard: level, pond: level };
 const FART: SeatInput = { move: { x: 0, y: 0 }, fart: true };
-/** A roster's seats: these names first, the rest open. */
-const seated = (...names: string[]) => [...names, ...Array(MAX_CREW - names.length).fill(null)];
+/** A roster's seats: these players first, in their seat's default look, the rest open. */
+const seated = (...names: string[]) => [
+  ...names.map((name, i) => ({ name, look: defaultLook(i) })),
+  ...Array(MAX_CREW - names.length).fill(null),
+];
+/** A crew member who joined without picking a look. */
+const rider = (name: string, seat: number | null, lookSeat = seat ?? 0) => ({
+  name,
+  seat,
+  look: defaultLook(lookSeat),
+});
 
 /** Runs on a TestClock, so each room's 60 Hz loop only moves when the test advances time. */
 const run = <A, E>(test: Effect.Effect<A, E, Lobby | Scope.Scope>) =>
@@ -245,10 +255,57 @@ describe("given two players in the lobby", () => {
           yield* play(1);
           const { frames, roster } = yield* drain(host.inbox);
           expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
-          expect(roster?.crew).toEqual([
-            { name: "Ann", seat: 0 },
-            { name: "Bo", seat: 1 },
-          ]);
+          expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", 1)]);
+        }),
+      ));
+  });
+
+  describe("when a player picks a look", () => {
+    const nurse = {
+      animal: "croc",
+      color: 9,
+      hat: "nurse",
+      outfit: "nurse",
+      gadget: "stethoscope",
+    } as const;
+
+    it("should seat a joiner in the look they joined with", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const inbox = yield* Queue.unbounded<ServerMsg>();
+          yield* room.join("Ann", nurse).pipe(
+            Stream.runForEach((msg) => Queue.offer(inbox, msg)),
+            Effect.forkScoped,
+          );
+          expect((yield* latestRoster(inbox)).seats[0]).toEqual({ name: "Ann", look: nurse });
+        }),
+      ));
+
+    it("should show a changed look on the seat and on the rider mid-race", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const host = yield* lease(room, "Ann");
+          yield* room.start(host.welcome.token);
+          yield* room.setLook(host.welcome.token, nurse);
+          const roster = yield* latestRoster(host.inbox);
+          expect(roster.seats[0]).toEqual({ name: "Ann", look: nurse });
+          expect(roster.crew).toEqual([{ name: "Ann", seat: 0, look: nurse }]);
+        }),
+      ));
+
+    it("should ignore a look sent with a stranger's token", () =>
+      run(
+        Effect.gen(function* () {
+          const room = yield* newRoom;
+          const host = yield* lease(room, "Ann");
+          yield* room.setLook("not-a-token", nurse);
+          yield* room.setLook(host.welcome.token, nurse);
+          expect((yield* latestRoster(host.inbox)).seats[0]?.look).toEqual(nurse);
+          yield* room.setLook("not-a-token", { ...nurse, hat: "crown" });
+          yield* TestClock.adjust("1 millis");
+          expect((yield* Queue.clear(host.inbox)).filter(ServerMsg.guards.Roster)).toEqual([]);
         }),
       ));
   });
@@ -267,7 +324,7 @@ describe("given eight players in the lobby", () => {
           yield* play(1);
           const { frames, roster } = yield* drain(host.inbox);
           expect(frames.at(-1)!.snapshot.riders).toHaveLength(MAX_CREW);
-          expect(roster?.crew).toEqual(names.map((name, seat) => ({ name, seat })));
+          expect(roster?.crew).toEqual(names.map((name, seat) => rider(name, seat)));
         }),
       ));
   });
@@ -362,7 +419,7 @@ describe("given a race in progress", () => {
           expect(frames.length).toBeGreaterThan(10);
           expect(frames.at(-1)!.snapshot.riders).toHaveLength(1);
           expect(fartsIn(frames)).toHaveLength(0);
-          expect(roster?.crew).toEqual([{ name: "Ann", seat: 0 }]);
+          expect(roster?.crew).toEqual([rider("Ann", 0)]);
         }),
       ));
 
@@ -379,10 +436,7 @@ describe("given a race in progress", () => {
           yield* play(4);
           const { frames, roster } = yield* drain(late.inbox);
           expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
-          expect(roster?.crew).toEqual([
-            { name: "Ann", seat: 0 },
-            { name: "Late", seat: 1 },
-          ]);
+          expect(roster?.crew).toEqual([rider("Ann", 0), rider("Late", 1)]);
           const farts = fartsIn(frames);
           expect(farts.length).toBeGreaterThan(0);
           expect(farts.every((e) => e.type === "fart" && e.seat === 1)).toBe(true);
@@ -406,10 +460,7 @@ describe("given a race in progress", () => {
           const { frames, roster } = yield* drain(host.inbox);
           expect(frames.at(-1)!.snapshot.riders).toHaveLength(2);
           expect(fartsIn(frames)).toHaveLength(0);
-          expect(roster?.crew).toEqual([
-            { name: "Ann", seat: 0 },
-            { name: "Bo", seat: null },
-          ]);
+          expect(roster?.crew).toEqual([rider("Ann", 0), rider("Bo", null, 1)]);
 
           yield* room.restart(host.welcome.token);
           yield* play(1);

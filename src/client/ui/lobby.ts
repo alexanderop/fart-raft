@@ -1,7 +1,9 @@
 import { connect, createRoom, type Connection } from "../../net/client.ts";
 import { showBanner } from "./banner.ts";
 import { difficultyPicker, MODE_LABELS } from "./difficulty.ts";
-import { lastDifficulty } from "./menu.ts";
+import { lastDifficulty, loadPlayers, savePlayers } from "./menu.ts";
+import { openWardrobe } from "./wardrobe.ts";
+import { lookBadge, lookColor, type Look } from "../../look.ts";
 import {
   CODE_LENGTH,
   CODE_LETTERS,
@@ -17,7 +19,7 @@ const NAME_KEY = "fart-raft:name";
 /** Courses offered when creating a game. Pond is the test course, so it stays hidden. */
 const PICKABLE: readonly { course: CourseName; label: string; blurb: string }[] = [
   { course: "canyon", label: "🏜️ Canyon", blurb: "Sweepers, hammers, piston alley" },
-  { course: "graveyard", label: "🪦 Graveyard", blurb: "Wide pools, logs, pumpkins" },
+  { course: "graveyard", label: "🏝️ Graveyard", blurb: "Wide pools, logs, bumpers" },
 ];
 
 const loadName = (): string => {
@@ -34,6 +36,13 @@ const saveName = (name: string): void => {
   } catch {
     // Not critical: the name is just asked again next time.
   }
+};
+
+/** Online you ride in player 1's look from the couch wardrobe; changes here dress them too. */
+const myLook = (): Look => loadPlayers()[0]!.look;
+const saveMyLook = (look: Look) => {
+  const players = loadPlayers();
+  savePlayers(players.with(0, { ...players[0]!, look }));
 };
 
 /** Upper-cases and drops anything that can't be in a room code. */
@@ -73,6 +82,7 @@ export function showOnlineMenu(
         <label class="menu-label" for="lobby-name">Your name</label>
         <input id="lobby-name" class="lobby-input" data-name maxlength="${MAX_NAME}"
           autocomplete="nickname" placeholder="Captain Toot" />
+        <button type="button" class="menu-online lobby-dress" data-dress></button>
         <div class="lobby-split">
           <section>
             <div class="menu-label">Join a game</div>
@@ -109,6 +119,22 @@ export function showOnlineMenu(
   const mode = difficultyPicker(lastDifficulty());
   root.querySelector("[data-mode-picker]")!.append(mode.el);
   const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
+  const dressButton = root.querySelector<HTMLButtonElement>("[data-dress]")!;
+  let look = myLook();
+  const showLook = () => {
+    dressButton.style.setProperty("--c", lookColor(look));
+    dressButton.innerHTML = `<span class="menu-dress-badge">${lookBadge(look)}</span> Dress up your rider 🎨`;
+  };
+  showLook();
+  dressButton.addEventListener("click", async () => {
+    const chosen = await openWardrobe(host, { title: "Your rider", look });
+    if (chosen) {
+      look = chosen.look;
+      saveMyLook(look);
+      showLook();
+    }
+    dressButton.focus();
+  });
 
   nameInput.value = loadName();
   codeInput.value = normalizeCode(room ?? "");
@@ -133,7 +159,7 @@ export function showOnlineMenu(
       saveName(name);
       busy(true, "Connecting…");
       try {
-        finish(await connect(server, await code(), name));
+        finish(await connect(server, await code(), name, look));
       } catch (error) {
         busy(false, error instanceof Error ? error.message : "Could not connect");
       }
@@ -199,15 +225,25 @@ export function showRoom(
 
   const render = (roster: Roster) => {
     seats.innerHTML = roster.seats
-      .map((name, i) => {
-        if (name === null) return `<li class="open">Open seat<small>share the link</small></li>`;
+      .map((player, i) => {
+        if (player === null) return `<li class="open">Open seat<small>share the link</small></li>`;
         const tags = [i === roster.host ? "👑" : "", i === conn.seat ? "(you)" : ""].join(" ");
-        return `<li${i === conn.seat ? ' class="me"' : ""}><b>${escapeHtml(name)}</b> ${tags}</li>`;
+        const badge = `<span class="menu-dress-badge">${lookBadge(player.look)}</span>`;
+        const who = `${badge}<span><b>${escapeHtml(player.name)}</b> ${tags}</span>`;
+        if (i !== conn.seat) {
+          return `<li class="menu-seat lobby-player" style="--c:${lookColor(player.look)}">${who}</li>`;
+        }
+        return `<li class="menu-seat me" style="--c:${lookColor(player.look)}">
+          <button type="button" class="menu-dress" data-dress aria-label="Dress up your rider">
+            ${who}<span class="menu-dress-edit">🎨</span>
+          </button>
+        </li>`;
       })
       .join("");
     const amHost = roster.host === conn.seat;
     start.hidden = !amHost;
-    const hostName = roster.host === null ? "the host" : roster.seats[roster.host];
+    const hostName =
+      (roster.host === null ? undefined : roster.seats[roster.host]?.name) ?? "the host";
     wait.textContent = amHost
       ? "Everyone here races. Friends who join mid-race ride in the next one."
       : `Waiting for ${hostName} to start…`;
@@ -215,6 +251,23 @@ export function showRoom(
   };
   render(conn.roster());
   const stop = conn.onRoster(render);
+  let dressing = false;
+  // The host may start while the wardrobe is open: the race takes the screen, so close it.
+  const leaving = new AbortController();
+  seats.addEventListener("click", async (e) => {
+    if (dressing || !(e.target instanceof Element && e.target.closest("[data-dress]"))) return;
+    const mine = conn.roster().seats[conn.seat];
+    dressing = true;
+    const chosen = await openWardrobe(host, {
+      title: "Your rider",
+      look: mine?.look ?? myLook(),
+      signal: leaving.signal,
+    });
+    dressing = false;
+    if (!chosen) return;
+    saveMyLook(chosen.look);
+    conn.setLook(chosen.look);
+  });
 
   start.addEventListener("click", () => {
     start.disabled = true;
@@ -242,6 +295,7 @@ export function showRoom(
   root.querySelector("[data-leave]")!.addEventListener("click", onLeave);
 
   return () => {
+    leaving.abort();
     stop();
     root.remove();
   };

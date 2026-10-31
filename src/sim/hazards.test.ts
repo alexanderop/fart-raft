@@ -6,10 +6,12 @@ import {
   COUNTDOWN_TICKS,
   crewZones,
   DIFFICULTY,
+  DOUBLEGATE_PERIOD,
   hazardRate,
   DROPGATE_PERIOD,
   HAMMER_ARM,
   INVULNERABLE_TICKS,
+  MACE_HIT_LIFT,
   RESPAWN_TICKS,
   KNOCK_SPEED,
   KNOCK_SPIN,
@@ -20,10 +22,12 @@ import {
   walkSpeed,
 } from "./constants.ts";
 import { bumperRadius } from "./hazards/bumper.ts";
+import { doublegateShut } from "./hazards/doublegate.ts";
 import { dropgateDown, dropgateLift, dropgateShake } from "./hazards/dropgate.ts";
 import { hammerDown, hammerLift, hammerPivot } from "./hazards/hammer.ts";
 import { hazardBoxes } from "./hazards/index.ts";
 import { logCenter } from "./hazards/log.ts";
+import { maceBob, maceLow } from "./hazards/mace.ts";
 import { mineCenter } from "./hazards/mine.ts";
 import { pistonCenter, pistonOut } from "./hazards/piston.ts";
 import { hazardTime } from "./hazards/shape.ts";
@@ -69,7 +73,7 @@ const bar: HazardDef = {
   hy: 0.4,
 };
 
-/** A pumpkin bumper in the same place, a hair wider than the bar is thick. */
+/** A spiked-ball bumper in the same place, a hair wider than the bar is thick. */
 const bumper: HazardDef = {
   id: "bumper",
   kind: "bumper",
@@ -244,7 +248,7 @@ describe("given a rolling log", () => {
   });
 });
 
-describe("given a pumpkin bumper", () => {
+describe("given a spiked-ball bumper", () => {
   describe("when time passes", () => {
     it("should swell and shrink between its radius and the pulse limit", () => {
       const radii = Array.from({ length: 200 }, (_, k) => bumperRadius(bumper, k * 0.05));
@@ -499,6 +503,126 @@ describe("given a drop gate", () => {
       for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
       expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
       expect(snapshot(sim).raft.x).toBeGreaterThan(dropgate.x + 4);
+    });
+  });
+});
+
+describe("given a double gate", () => {
+  // Two doors hinged at (12, ±7), meeting at (12, 0) when shut, across the raft's way.
+  const doublegate: HazardDef = {
+    id: "doublegate",
+    kind: "doublegate",
+    speed: 0,
+    x: 12,
+    y: 0,
+    rot: Math.PI / 2,
+    hx: 7,
+    hy: 0.45,
+  };
+
+  describe("when time passes", () => {
+    it("should start open, swing shut once a cycle, and open again", () => {
+      const shut = Array.from({ length: 600 }, (_, k) =>
+        doublegateShut(doublegate, (k / 600) * DOUBLEGATE_PERIOD),
+      );
+      expect(shut[0]).toBe(0);
+      expect(Math.max(...shut)).toBe(1);
+      const closings = shut.filter((v, k) => v === 1 && shut[k - 1] !== 1).length;
+      expect(closings).toBe(1);
+      expect(shut.filter((v) => v === 0).length / shut.length).toBeGreaterThan(0.5);
+    });
+
+    it("should meet in the middle when shut and lie along the banks, upstream, when open", () => {
+      const shutAt = DOUBLEGATE_PERIOD - 1.5;
+      expect(doublegateShut(doublegate, shutAt)).toBe(1);
+      const [left, right] = hazardBoxes(doublegate, shutAt);
+      expect(left!.x).toBeCloseTo(12);
+      expect(left!.y + left!.hx).toBeCloseTo(7);
+      expect(right!.y - right!.hx).toBeCloseTo(-7);
+      for (const door of hazardBoxes(doublegate, 0)) {
+        expect(Math.abs(door.y)).toBeCloseTo(7); // flat along its bank
+        expect(door.x).toBeCloseTo(12 - 3.5); // reaching upstream from the hinge
+      }
+    });
+  });
+
+  describe("when the raft drives through while it is open", () => {
+    it("should let the raft pass", () => {
+      // It next swings shut 37 s in, long after the raft is through.
+      const late = { ...doublegate, period: 40 };
+      const sim = createSim(pond(late), FULL, WILD);
+      const events: SimEvent[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
+      expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
+      expect(snapshot(sim).raft.x).toBeGreaterThan(doublegate.x + 4);
+    });
+  });
+
+  describe("when the raft rams it while it is shut", () => {
+    it("should wipe the crew out and throw the raft back", () => {
+      // Shut from the start for half a minute: 10 s into a 40 s cycle that stays shut 30 s.
+      const shut = { ...doublegate, period: 40, down: 30, phase: Math.PI / 2 };
+      expect(doublegateShut(shut, 0)).toBe(1);
+      const { hit, raft } = firstHit(pond(shut));
+      expect(hit.event.dirX).toBeLessThan(-0.9);
+      expect(raft.x).toBeLessThan(doublegate.x);
+    });
+  });
+});
+
+describe("given a mace", () => {
+  // Hung over (12, 0), its 1.3 m bob swings 5.5 m either side across the raft's way.
+  const mace: HazardDef = {
+    id: "mace",
+    kind: "mace",
+    speed: 1.3,
+    x: 12,
+    y: 0,
+    rot: Math.PI / 2,
+    hx: 1.3,
+    hy: 1.3,
+    range: 5.5,
+  };
+
+  describe("when time passes", () => {
+    it("should hang low through the middle of each swing and high at either end", () => {
+      const period = (2 * Math.PI) / mace.speed;
+      const bobs = Array.from({ length: 600 }, (_, k) => maceBob(mace, (k / 600) * period));
+      expect(Math.max(...bobs.map((b) => b.y))).toBeCloseTo(5.5);
+      expect(Math.min(...bobs.map((b) => b.y))).toBeCloseTo(-5.5);
+      for (const bob of bobs) {
+        expect(bob.x).toBeCloseTo(12);
+        if (Math.abs(bob.y) > 4) expect(bob.lift).toBeGreaterThan(MACE_HIT_LIFT);
+        if (Math.abs(bob.y) < 1) expect(bob.lift).toBeLessThan(MACE_HIT_LIFT);
+      }
+      const low = bobs.filter((b) => b.lift < MACE_HIT_LIFT).length / bobs.length;
+      expect(low).toBeGreaterThan(0.2);
+      expect(low).toBeLessThan(0.5);
+    });
+  });
+
+  describe("when the raft drives into the bob while it is low", () => {
+    it("should wipe the crew out and throw the raft back", () => {
+      // Frozen at the bottom of its swing, right in the raft's way.
+      const low = { ...mace, speed: 0 };
+      expect(maceLow(low, 0)).toBe(true);
+      const { hit, raft } = firstHit(pond(low));
+      expect(hit.event.dirX).toBeLessThan(-0.9);
+      expect(raft.x).toBeLessThan(mace.x);
+    });
+  });
+
+  describe("when the raft drives under the bob while it is high", () => {
+    it("should let the raft pass", () => {
+      // Frozen at the end of its swing, hung over the raft's way: the riders pass beneath it.
+      const high = { ...mace, speed: 0, y: -5.5, phase: Math.PI / 2 };
+      expect(maceBob(high, 0).y).toBeCloseTo(0);
+      expect(maceLow(high, 0)).toBe(false);
+      const sim = createSim(pond(high), FULL, WILD);
+      const events: SimEvent[] = [];
+      for (let t = 0; t < COUNTDOWN_TICKS + 6 * TICK_RATE; t++) events.push(...step(sim, rearFart));
+      expect(events.filter((e) => e.type === "hit")).toHaveLength(0);
+      expect(snapshot(sim).raft.x).toBeGreaterThan(mace.x + 4);
     });
   });
 });

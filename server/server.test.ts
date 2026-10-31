@@ -6,11 +6,15 @@ import { describe, expect, it } from "vite-plus/test";
 import pond from "../courses/pond.json";
 import { clientLayer, connect, createRoom, RaftClient } from "../src/net/client.ts";
 import { RoomFull, RoomNotFound, type Frame } from "../src/net/protocol.ts";
+import { defaultLook } from "../src/look.ts";
 import { MAX_CREW } from "../src/sim/constants.ts";
 import { parseLevel } from "../src/sim/level.ts";
 import { appLayer } from "./app.ts";
 
 const level = parseLevel(pond);
+const look = defaultLook(0);
+/** A seated player in the look every test joins with. */
+const player = (name: string) => ({ name, look });
 /** `n` open seats in a roster. */
 const open = (n: number): null[] => Array(n).fill(null);
 const serverLayer = appLayer({ canyon: level, graveyard: level, pond: level }).pipe(
@@ -40,7 +44,7 @@ describe("given the server listening on a free port", () => {
           const client = yield* clientFor(url);
           const code = yield* client.CreateRoom({ course: "pond", difficulty: "chill" });
           const messages = Array.from(
-            yield* Stream.runCollect(client.Join({ code, name: "Ann" }).pipe(Stream.take(2))),
+            yield* Stream.runCollect(client.Join({ code, name: "Ann", look }).pipe(Stream.take(2))),
           );
           expect(messages[0]).toMatchObject({ _tag: "Welcome", seat: 0 });
           expect(messages[1]).toMatchObject({
@@ -49,7 +53,7 @@ describe("given the server listening on a free port", () => {
               code,
               course: "pond",
               difficulty: "chill",
-              seats: ["Ann", ...open(MAX_CREW - 1)],
+              seats: [player("Ann"), ...open(MAX_CREW - 1)],
               host: 0,
               crew: [],
             },
@@ -64,7 +68,7 @@ describe("given the server listening on a free port", () => {
         Effect.gen(function* () {
           const client = yield* clientFor(url);
           const error = yield* Effect.flip(
-            Stream.runDrain(client.Join({ code: "ZZZZ", name: "" })),
+            Stream.runDrain(client.Join({ code: "ZZZZ", name: "", look })),
           );
           expect(error).toBeInstanceOf(RoomNotFound);
         }),
@@ -80,14 +84,16 @@ describe("given the server listening on a free port", () => {
           for (let i = 0; i < MAX_CREW; i++) {
             // One inbox per seat: wait for this join's own Welcome, not an earlier seat's roster.
             const joined = yield* Queue.unbounded<unknown>();
-            yield* client.Join({ code, name: `P${i}` }).pipe(
+            yield* client.Join({ code, name: `P${i}`, look }).pipe(
               Stream.runForEach((msg) => Queue.offer(joined, msg)),
               Effect.forkScoped,
             );
             yield* Queue.take(joined);
           }
 
-          const error = yield* Effect.flip(Stream.runDrain(client.Join({ code, name: "Eve" })));
+          const error = yield* Effect.flip(
+            Stream.runDrain(client.Join({ code, name: "Eve", look })),
+          );
           expect(error).toBeInstanceOf(RoomFull);
         }),
       ));
@@ -98,10 +104,14 @@ describe("given the server listening on a free port", () => {
       withServer((url) =>
         Effect.promise(async () => {
           const code = await createRoom(url, "pond", "chill");
-          const host = await connect(url, code, "Ann");
-          const guest = await connect(url, code, "Bo");
+          const host = await connect(url, code, "Ann", look);
+          const guest = await connect(url, code, "Bo", look);
           expect([host.seat, guest.seat]).toEqual([0, 1]);
-          expect(guest.roster().seats).toEqual(["Ann", "Bo", ...open(MAX_CREW - 2)]);
+          expect(guest.roster().seats).toEqual([
+            player("Ann"),
+            player("Bo"),
+            ...open(MAX_CREW - 2),
+          ]);
           expect(guest.roster().host).toBe(0);
 
           guest.start();
@@ -126,7 +136,7 @@ describe("given the server listening on a free port", () => {
     it("should reject with a readable reason", () =>
       withServer((url) =>
         Effect.promise(async () => {
-          await expect(connect(url, "QQQQ", "Ann")).rejects.toThrow("No game with code QQQQ");
+          await expect(connect(url, "QQQQ", "Ann", look)).rejects.toThrow("No game with code QQQQ");
         }),
       ));
   });

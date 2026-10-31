@@ -12,6 +12,7 @@ import { createScene } from "./render/scene.ts";
 import type { FrameView, Session } from "./session.ts";
 import { createHud, progressTrack } from "./ui/hud.ts";
 import { createVolumeButton } from "./ui/volume.ts";
+import { lookColor } from "../look.ts";
 
 /** One frame as the fx see it: the session's frame plus the interpolated raft pose. */
 export type RaceFrame = FrameView & { raft: Pose };
@@ -111,6 +112,9 @@ export async function createRace(opts: RaceOptions): Promise<Race> {
       };
       for (const e of events) for (const sink of sinks) sink.onEvent?.(e);
       hud.setLabels(session.seatLabels());
+      const looks = session.seatLooks();
+      hud.setColors(looks.map(lookColor));
+      view.setLooks(looks);
       for (const sink of sinks) sink.update?.(dt, f);
       view.draw(prev, curr, alpha, shake.update(dt));
       view.camera.getWorldDirection(lookDir);

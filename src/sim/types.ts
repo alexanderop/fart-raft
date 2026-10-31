@@ -27,7 +27,9 @@ export type SimEvent =
    */
   | { type: "hit"; deaths: number; x: number; y: number; dirX: number; dirY: number }
   /** The raft is back at the last gate passed (or the start): (x, y) is where it reappeared. */
-  | { type: "respawn"; x: number; y: number };
+  | { type: "respawn"; x: number; y: number }
+  /** The raft ran onto a boost pad at (x, y): it is shoved along the unit vector (dirX, dirY). */
+  | { type: "boost"; x: number; y: number; dirX: number; dirY: number };
 
 export type Phase =
   | { kind: "countdown"; ticksLeft: number }
@@ -72,7 +74,7 @@ export type Vec2 = { x: number; y: number };
  * with angular frequency `speed`.
  * Log: a spiked log of half-length `hx` and radius `hy`, its axis along `rot`, rolling back and
  * forth across that axis: its center runs `range` m either side of (x, y), `speed` rad/s, `phase` rad.
- * Bumper: a round spiked pumpkin of radius `hx` at (x, y) that swells and shrinks at `speed` rad/s.
+ * Bumper: a round spiked ball of radius `hx` at (x, y) that swells and shrinks at `speed` rad/s.
  * Hammer: a spiked mallet hinged on the bank HAMMER_ARM m back along `rot`; once per cycle
  * (`speed` rad/s, `phase` rad) it slams down on the box (x, y, rot, hx, hy) and only hurts there.
  * Piston: a spiked block of half-extents (hx along `rot`, hy) resting in a bank at (x, y); once
@@ -80,8 +82,14 @@ export type Vec2 = { x: number; y: number };
  * Dropgate: a spiked bar of half-length `hx` along `rot` (across the channel, bank to bank) and
  * half-thickness `hy`, hung between two posts. Every `period` s it shakes, slams onto the water,
  * rests there `down` s and rises over `rise` s; it only hurts while down. `speed` is unused (0).
+ * Doublegate: two spiked doors hinged on the banks `hx` m either side of (x, y) along `rot`
+ * (across the channel), each `hx` long and `2·hy` thick. Every `period` s they swing shut, meet
+ * in the middle, stay shut `down` s and swing open upstream over `rise` s. `speed` is unused (0).
  * Mine: a floating spiked mine of radius `hx`, drifting `range` m either side of (x, y) along
  * `rot` at `speed` rad/s (still without a `range`). Touching it wipes the crew out.
+ * Mace: a spiked bob of radius `hx` hung from a gantry over (x, y), swinging like a pendulum
+ * `range` m either side along `rot` (across the channel) at `speed` rad/s, `phase` rad. It hurts
+ * only while low, through the middle of its swing; at either end it hangs over the riders' heads.
  */
 export type HazardDef = {
   id: string;
@@ -94,16 +102,21 @@ export type HazardDef = {
     | "hammer"
     | "piston"
     | "dropgate"
-    | "mine";
+    | "doublegate"
+    | "mine"
+    | "mace";
   speed: number;
   /**
    * Log: how far its center travels either side of (x, y). Piston: how far it punches out.
-   * Mine: how far it drifts either side of (x, y). m.
+   * Mine: how far it drifts either side of (x, y). Mace: how far its bob swings either side. m.
    */
   range?: number;
-  /** Log, bumper, hammer, piston, dropgate and mine: where in its cycle the hazard starts, radians. */
+  /** Log, bumper, hammer, piston, dropgate, doublegate, mine and mace: where in its cycle the hazard starts, radians. */
   phase?: number;
-  /** Dropgate: seconds per cycle, how long it rests down, and how long it takes to rise again. */
+  /**
+   * Dropgate: seconds per cycle, how long it rests down, and how long it takes to rise again.
+   * Doublegate: seconds per cycle, how long it stays shut, and how long it takes to swing open.
+   */
   period?: number;
   down?: number;
   rise?: number;
@@ -116,11 +129,23 @@ export type Span = { side: "left" | "right"; from: number; to: number };
 export type Stretch = { from: number; to: number };
 
 /**
- * Most of a course is one winding channel: control points of its centerline and a constant
- * half-width. The banks (colliders and visuals) are derived from it, see sim/channel.ts.
- * `rapids` are stretches where the water runs at RAPIDS_SPEED.
+ * A pond: the channel opens to `halfWidth` m between arc lengths `from` and `to`, easing out over
+ * the first POND_RAMP m and back in over the last (see `halfWidthAt`).
  */
-export type Channel = { halfWidth: number; points: Vec2[]; spikes: Span[]; rapids?: Stretch[] };
+export type Pond = Stretch & { halfWidth: number };
+
+/**
+ * Most of a course is one winding channel: control points of its centerline and a half-width.
+ * The banks (colliders and visuals) are derived from it, see sim/channel.ts. `rapids` are
+ * stretches where the water runs at RAPIDS_SPEED; `ponds` widen it into calm pools.
+ */
+export type Channel = {
+  halfWidth: number;
+  points: Vec2[];
+  spikes: Span[];
+  rapids?: Stretch[];
+  ponds?: Pond[];
+};
 
 export type LevelData = {
   name: string;
@@ -131,4 +156,9 @@ export type LevelData = {
   /** In race order. The last one is the finish line. */
   checkpoints: Box[];
   hazards: HazardDef[];
+  /**
+   * Boost pads: `>>` chevrons on the water. A raft whose center is on one (within BOOST_REACH m of
+   * the box) is pushed along `rot`, up to BOOST_SPEED. Not hazards: nothing here wipes out.
+   */
+  boosts?: Box[];
 };

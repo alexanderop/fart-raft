@@ -216,8 +216,29 @@ export const DROPGATE_SLAM = 0.15;
 /** A drop gate lower than this fraction of its full lift reaches the riders' heads and hurts. */
 export const DROPGATE_HIT_LIFT = 0.3;
 export const DROPGATE_KNOCK = 1.3;
+/**
+ * A double gate's cycle, by default: DOUBLEGATE_PERIOD s, starting wide open. Its two doors swing
+ * shut over DOUBLEGATE_CLOSE s, stay shut DOUBLEGATE_SHUT s and swing open again over
+ * DOUBLEGATE_OPEN s. Each gate may set its own period, shut (`down`) and open (`rise`) times.
+ * Wide open, each door stands DOUBLEGATE_SWING rad from closed, flat along its bank.
+ */
+export const DOUBLEGATE_PERIOD = 6;
+export const DOUBLEGATE_CLOSE = 0.8;
+export const DOUBLEGATE_SHUT = 1;
+export const DOUBLEGATE_OPEN = 1.2;
+export const DOUBLEGATE_SWING = Math.PI / 2;
+export const DOUBLEGATE_KNOCK = 1.3;
 /** A mine bursts: it throws the raft a bit harder than a bar does. */
 export const MINE_KNOCK = 1.2;
+/**
+ * A mace swings MACE_SWING rad either side of straight down. Its bob rises on the arc, and it
+ * only reaches the riders while lower than MACE_HIT_LIFT m above the bottom of its swing.
+ */
+export const MACE_SWING = 1;
+export const MACE_HIT_LIFT = 1;
+export const MACE_KNOCK = 1.5;
+/** Course mace swing out to this far (m) short of the banks; the client's gantry stands beyond. */
+export const MACE_BANK_GAP = 1.5;
 
 /**
  * Rapids: stretches of a channel where the water runs at RAPIDS_SPEED m/s instead of
@@ -225,5 +246,19 @@ export const MINE_KNOCK = 1.2;
  */
 export const RAPIDS_SPEED = 11;
 export const RAPIDS_RAMP = 8;
+
+/**
+ * Ponds (`Channel.ponds`) widen the channel over POND_RAMP m at either end. The water slows in
+ * them, to CURRENT_SPEED × channel half-width / pond half-width: the same flow through more room.
+ */
+export const POND_RAMP = 16;
+
+/**
+ * Boost pads: while the raft's center is within BOOST_REACH m of a pad, it speeds up along the
+ * pad at BOOST_ACCEL m/s², until it runs BOOST_SPEED m/s that way. Water drag bleeds it off after.
+ */
+export const BOOST_ACCEL = 30;
+export const BOOST_SPEED = 13;
+export const BOOST_REACH = 1;
 
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;

@@ -5,12 +5,14 @@ import type { HazardDef, LevelData, SimEvent, Snapshot } from "../../sim/types.t
 import { applyPose, lerpPose } from "./coords.ts";
 import { createSky, createWater, HAZE } from "./env.ts";
 import { loadKit } from "./kit.ts";
+import { createBoostPads } from "./boosts.ts";
 import { createChaseCamera } from "./chaseCamera.ts";
 import { createHazardView, type HazardView } from "./hazards.ts";
 import { createRaftMotion } from "./raftMotion.ts";
 import { createRiderAnimator } from "./riders.ts";
 import { buildTerrain } from "./terrain.ts";
 import { createZoneMarks } from "./zones.ts";
+import { lookColor, type Look } from "../../look.ts";
 import { createPixelRatioGovernor, detectQuality } from "./quality.ts";
 
 export type SceneView = {
@@ -20,6 +22,8 @@ export type SceneView = {
   /** Feed every drained SimEvent here; animation reacts to events and snapshots only. */
   onEvent(e: SimEvent): void;
   draw(prev: Snapshot, curr: Snapshot, alpha: number, shake: THREE.Vector3): void;
+  /** One look per rider (animal, color, costume); cheap to call every frame. */
+  setLooks(looks: readonly Look[]): void;
   /** Frees the GPU side (geometries, materials, textures, the WebGL context) and removes the canvas. */
   dispose(): void;
 };
@@ -70,9 +74,9 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
   scene.fog = new THREE.Fog(HAZE, 45, 170);
   const sky = createSky();
   scene.add(sky);
-  scene.add(new THREE.HemisphereLight(0xa996e0, 0x3a2030, 1.6));
+  scene.add(new THREE.HemisphereLight(0xf2f8ff, 0xf3c3a4, 2.2));
 
-  const sun = new THREE.DirectionalLight(0xd6dcff, 1.5);
+  const sun = new THREE.DirectionalLight(0xfff6e8, 1.3);
   sun.castShadow = true;
   sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
   const cam = sun.shadow.camera;
@@ -88,6 +92,8 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
   if (!level.channel) scene.add(water.plane);
   const terrain = buildTerrain(level, kit, water.material);
   scene.add(terrain.group);
+  const boosts = createBoostPads(level);
+  scene.add(boosts.group);
 
   // Each view with its kind: hazard time runs at the kind's rate (`hazardTime`).
   const hazards = new Map<string, { view: HazardView; kind: HazardDef["kind"] }>(
@@ -101,16 +107,18 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
   const raft = kit.clone("raft");
   scene.add(raft);
   let marks: THREE.Group | undefined;
-  let markedCrew = -1;
-  /** Seat colors on the ring for `crew` riders, rebuilt whenever the crew size changes. */
+  let marked = "";
+  let colors: string[] = [];
+  /** Rider colors on the ring for `crew` riders, rebuilt whenever the crew or a color changes. */
   const markCrew = (crew: number) => {
-    if (crew === markedCrew) return;
-    markedCrew = crew;
+    const key = `${crew}|${colors.slice(0, crew).join()}`;
+    if (key === marked) return;
+    marked = key;
     if (marks) {
       raft.remove(marks);
       disposeGraph(marks);
     }
-    marks = createZoneMarks(crewZones(crew));
+    marks = createZoneMarks(crewZones(crew), colors);
     raft.add(marks);
   };
 
@@ -145,11 +153,16 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
     renderer,
     scene,
     camera,
+    setLooks(looks) {
+      colors = looks.map(lookColor);
+      riders.setLooks(looks);
+    },
     onEvent(e) {
       const t = performance.now() / 1000;
       riders.onEvent(e, t);
       motion.onEvent(e, t);
       terrain.onEvent(e);
+      boosts.onEvent(e);
     },
     draw(prev, curr, alpha, shake) {
       const now = performance.now() / 1000;
@@ -180,6 +193,7 @@ export async function createScene(canvasHost: HTMLElement, level: LevelData): Pr
       sun.position.copy(sun.target.position).add(SUN_OFFSET);
       sky.position.copy(camera.position);
       terrain.update(now, pose, camera);
+      boosts.update(now, dt);
       water.update(now);
       renderer.render(scene, camera);
     },

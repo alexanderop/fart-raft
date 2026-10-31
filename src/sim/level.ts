@@ -2,7 +2,17 @@ import RAPIER from "@dimforge/rapier2d-compat";
 import { channelWalls } from "./channel.ts";
 import { HAZARD_KINDS } from "./hazards/index.ts";
 import { isIsland, islandOutline } from "./island.ts";
-import type { Box, Channel, HazardDef, LevelData, Pose, Span, Stretch, Vec2 } from "./types.ts";
+import type {
+  Box,
+  Channel,
+  HazardDef,
+  LevelData,
+  Pond,
+  Pose,
+  Span,
+  Stretch,
+  Vec2,
+} from "./types.ts";
 
 const BANK_RESTITUTION = 0.3;
 const SPIKE_RESTITUTION = 0.9;
@@ -74,18 +84,27 @@ const isVec2 = (v: unknown): v is Vec2 => isObject(v) && hasNums(v, ["x", "y"]);
 const isStretch = (v: unknown): v is Stretch => isObject(v) && hasNums(v, ["from", "to"]);
 const isSpan = (v: unknown): v is Span =>
   isObject(v) && hasNums(v, ["from", "to"]) && (v.side === "left" || v.side === "right");
+/** A pond runs downstream (`from` < `to`) and is wider than the channel it opens out of. */
+const isPondOf =
+  (channelHalfWidth: unknown) =>
+  (v: unknown): v is Pond =>
+    isObject(v) &&
+    hasNums(v, ["from", "to", "halfWidth"]) &&
+    Number(v.from) < Number(v.to) &&
+    Number(v.halfWidth) > Number(channelHalfWidth);
 const isChannel = (v: unknown): v is Channel =>
   isObject(v) &&
   hasNums(v, ["halfWidth"]) &&
   isList(v.points, isVec2) &&
   v.points.length >= 2 &&
   isList(v.spikes, isSpan) &&
-  (v.rapids === undefined || isList(v.rapids, isStretch));
+  (v.rapids === undefined || isList(v.rapids, isStretch)) &&
+  (v.ponds === undefined || isList(v.ponds, isPondOf(v.halfWidth)));
 
 /** Validate a course JSON (hand-written or exported from Blender). Throws with the first bad field. */
 export function parseLevel(data: unknown): LevelData {
   if (!isObject(data)) throw new Error("level: not an object");
-  const { name, spawn, channel = null, walls, checkpoints, hazards } = data;
+  const { name, spawn, channel = null, walls, checkpoints, hazards, boosts = [] } = data;
   if (typeof name !== "string") throw new Error("level: name must be a string");
   if (!isPose(spawn)) throw new Error(`level ${name}: bad spawn`);
   if (channel !== null && !isChannel(channel)) throw new Error(`level ${name}: bad channel`);
@@ -93,5 +112,6 @@ export function parseLevel(data: unknown): LevelData {
   if (!isList(checkpoints, isBox) || checkpoints.length === 0)
     throw new Error(`level ${name}: needs at least one checkpoint`);
   if (!isList(hazards, isHazard)) throw new Error(`level ${name}: bad hazards`);
-  return { name, spawn, channel, walls, checkpoints, hazards };
+  if (!isList(boosts, isBox)) throw new Error(`level ${name}: bad boosts`);
+  return { name, spawn, channel, walls, checkpoints, hazards, boosts };
 }

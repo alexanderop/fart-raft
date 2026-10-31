@@ -19,6 +19,7 @@ import { touchSource } from "./touch.ts";
  * (connection order), the rest play on keyboard clusters, bots fill what is left, and a pad that
  * presses fart while idle can take over a bot seat mid-race (rule in `planSeats`). Each seat is
  * just an InputSource. `heading` is the camera's forward direction on the water (sim radians).
+ * `names[i]` labels human seat `i` (blank keeps "P1"/"You").
  */
 export function createSeatDriver(
   humans: number,
@@ -27,6 +28,7 @@ export function createSeatDriver(
   lvl: LevelData,
   heading: () => number,
   pads: Gamepads,
+  names: readonly string[] = [],
 ) {
   const kinds: SeatKind[] = zones.map((_, i) => (i < humans ? "human" : "bot"));
   const wantsIn = new Set<number>();
@@ -53,9 +55,10 @@ export function createSeatDriver(
     labels = zones.map((_, i) => {
       const onPad = [...plan.pads.values()].includes(i);
       const cluster = plan.keys.get(i);
-      if (humans === 1 && i === 0) return onPad ? "You 🎮" : "You";
-      if (onPad) return `P${i + 1} · 🎮`;
-      return cluster === undefined ? "Bot" : `P${i + 1} · ${CONTROLS[cluster]}`;
+      const name = names[i]?.trim();
+      if (humans === 1 && i === 0) return `${name || "You"}${onPad ? " 🎮" : ""}`;
+      if (onPad) return `${name || `P${i + 1}`} · 🎮`;
+      return cluster === undefined ? "Bot" : `${name || `P${i + 1}`} · ${CONTROLS[cluster]}`;
     });
   }
 

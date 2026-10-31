@@ -11,6 +11,7 @@ export function createCameraShake() {
       if (e.type === "bump") trauma = Math.min(1, trauma + e.speed * 0.08);
       if (e.type === "checkpoint") trauma = Math.min(1, trauma + 0.2);
       if (e.type === "hit") trauma = 1;
+      if (e.type === "boost") trauma = Math.min(1, trauma + 0.25);
     },
     update(dt: number): Vector3 {
       trauma = Math.max(0, trauma - DECAY * dt);

@@ -1,4 +1,4 @@
-import { CURRENT_SPEED, RAPIDS_RAMP, RAPIDS_SPEED } from "./constants.ts";
+import { CURRENT_SPEED, POND_RAMP, RAPIDS_RAMP, RAPIDS_SPEED } from "./constants.ts";
 import { isIsland } from "./island.ts";
 import type { Box, Channel, LevelData, Vec2 } from "./types.ts";
 
@@ -31,9 +31,32 @@ function smooth(points: readonly Vec2[]): Vec2[] {
   return pts;
 }
 
-/** The centerline sampled densely, with vertex tangents averaged so offsets bend smoothly. */
+/** Samples at most this far apart (m) inside a pond, so its curved banks stay smooth. */
+const POND_STEP = 1;
+
+/**
+ * The centerline sampled densely, with vertex tangents averaged so offsets bend smoothly. Inside
+ * ponds extra samples go in along the same polyline, every POND_STEP m.
+ */
 export function sampleChannel(ch: Channel): Sample[] {
-  const pts = smooth(ch.points);
+  const samples = sampleLine(ch.points);
+  const ponds = ch.ponds ?? [];
+  if (!ponds.length) return samples;
+  const out: Sample[] = [samples[0]!];
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1]!;
+    const b = samples[i]!;
+    if (ponds.some((p) => a.s < p.to && b.s > p.from)) {
+      const n = Math.ceil((b.s - a.s) / POND_STEP);
+      for (let k = 1; k < n; k++) out.push(pointAt(samples, a.s + ((b.s - a.s) * k) / n));
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+function sampleLine(points: readonly Vec2[]): Sample[] {
+  const pts = smooth(points);
   let s = 0;
   return pts.map((p, i) => {
     if (i > 0) s += Math.hypot(p.x - pts[i - 1]!.x, p.y - pts[i - 1]!.y);
@@ -90,9 +113,36 @@ export function rapidsAt(ch: Channel, s: number): number {
   return w;
 }
 
-/** How fast the water runs downstream at arc length `s`, m/s. */
-export const flowSpeed = (ch: Channel, s: number): number =>
-  CURRENT_SPEED + (RAPIDS_SPEED - CURRENT_SPEED) * rapidsAt(ch, s);
+/**
+ * The channel's half-width at arc length `s`: `halfWidth`, opening to a pond's half-width inside
+ * it over POND_RAMP m at either end. The ramp is a quarter sine: the bank leaves the corridor at
+ * a corner and rounds off into the pool, so a pond reads round.
+ */
+export function halfWidthAt(ch: Channel, s: number): number {
+  let w = ch.halfWidth;
+  for (const p of ch.ponds ?? []) {
+    const into = Math.min(s - p.from, p.to - s) / POND_RAMP;
+    if (into <= 0) continue;
+    w = Math.max(
+      w,
+      ch.halfWidth + (p.halfWidth - ch.halfWidth) * Math.sin((Math.PI / 2) * Math.min(1, into)),
+    );
+  }
+  return w;
+}
+
+/** The widest the channel gets anywhere, m. */
+export const maxHalfWidth = (ch: Channel): number =>
+  Math.max(ch.halfWidth, ...(ch.ponds ?? []).map((p) => p.halfWidth));
+
+/**
+ * How fast the water runs downstream at arc length `s`, m/s: fast in rapids, and slower where
+ * the channel is wider (a pond), so the same water flows through.
+ */
+export function flowSpeed(ch: Channel, s: number): number {
+  const speed = CURRENT_SPEED + (RAPIDS_SPEED - CURRENT_SPEED) * rapidsAt(ch, s);
+  return ch.ponds?.length ? (speed * ch.halfWidth) / halfWidthAt(ch, s) : speed;
+}
 
 /** Arc length of the centerline point closest to `p`. */
 export function nearestS(samples: readonly Sample[], p: Vec2): number {
@@ -114,10 +164,12 @@ export function nearestS(samples: readonly Sample[], p: Vec2): number {
   return bestS;
 }
 
-/** Bank colliders: one thin box per centerline segment on each side, plus end caps. */
+/**
+ * Bank colliders: one thin box per centerline segment on each side, plus end caps. Where the
+ * width changes along a segment (a pond's ramp), its box tilts to lie along the bank.
+ */
 export function channelWalls(ch: Channel): BankWall[] {
   const samples = sampleChannel(ch);
-  const off = ch.halfWidth + WALL_HALF_THICKNESS;
   const walls: BankWall[] = [];
   for (let i = 0; i + 1 < samples.length; i++) {
     const a = samples[i]!;
@@ -130,16 +182,37 @@ export function channelWalls(ch: Channel): BankWall[] {
     const mx = (a.x + b.x) / 2;
     const my = (a.y + b.y) / 2;
     const mid = (a.s + b.s) / 2;
+    const wa = halfWidthAt(ch, a.s);
+    const wb = halfWidthAt(ch, b.s);
     for (const side of ["left", "right"] as const) {
       const k = side === "left" ? 1 : -1;
+      const spiky = ch.spikes.some((sp) => sp.side === side && mid >= sp.from && mid <= sp.to);
+      if (wa === wb) {
+        const off = wa + WALL_HALF_THICKNESS;
+        walls.push({
+          x: mx + nx * off * k,
+          y: my + ny * off * k,
+          rot: Math.atan2(dy, dx),
+          hx: len / 2 + WALL_OVERLAP,
+          hy: WALL_HALF_THICKNESS,
+          side,
+          spiky,
+        });
+        continue;
+      }
+      // The bank runs from `wa` to `wb` m out across the segment: tilt the box by that slope and
+      // push it its half-thickness outward, square to the bank.
+      const tilt = Math.atan2(wb - wa, len) * k;
+      const rot = Math.atan2(dy, dx) + tilt;
+      const off = (wa + wb) / 2;
       walls.push({
-        x: mx + nx * off * k,
-        y: my + ny * off * k,
-        rot: Math.atan2(dy, dx),
-        hx: len / 2 + WALL_OVERLAP,
+        x: mx + nx * off * k - Math.sin(rot) * WALL_HALF_THICKNESS * k,
+        y: my + ny * off * k + Math.cos(rot) * WALL_HALF_THICKNESS * k,
+        rot,
+        hx: Math.hypot(len, wb - wa) / 2 + WALL_OVERLAP,
         hy: WALL_HALF_THICKNESS,
         side,
-        spiky: ch.spikes.some((sp) => sp.side === side && mid >= sp.from && mid <= sp.to),
+        spiky,
       });
     }
   }
@@ -150,7 +223,7 @@ export function channelWalls(ch: Channel): BankWall[] {
       y: end.y + end.ty * WALL_HALF_THICKNESS * out,
       rot: Math.atan2(end.ty, end.tx),
       hx: WALL_HALF_THICKNESS,
-      hy: off + WALL_HALF_THICKNESS,
+      hy: halfWidthAt(ch, end.s) + WALL_HALF_THICKNESS + WALL_HALF_THICKNESS,
       side: "end",
       spiky: false,
     });

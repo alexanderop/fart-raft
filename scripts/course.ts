@@ -1,17 +1,28 @@
 // Helpers the channel course generators share (canyon.ts, graveyard.ts): things placed by arc
 // length along the centerline, so moving a control point keeps every gate square to the stream.
 import { writeFileSync } from "node:fs";
-import { pointAt, sampleChannel, type Sample } from "../src/sim/channel.ts";
+import { halfWidthAt, pointAt, sampleChannel, type Sample } from "../src/sim/channel.ts";
+import { MACE_BANK_GAP } from "../src/sim/constants.ts";
 import type { Box, Channel, HazardDef, LevelData, Span } from "../src/sim/types.ts";
 
 /** A drop gate's timing (see HazardDef): seconds per cycle, down and rising, and its phase (rad). */
 export type DropgateTiming = { period?: number; down?: number; rise?: number; phase?: number };
+
+/** A double gate's timing (see HazardDef): seconds per cycle, shut and swinging open, and its phase (rad). */
+export type DoublegateTiming = DropgateTiming;
+
+/** A mace's swing: `speed` rad/s, `phase` rad, and the bob's radius `r` (m). */
+export type MaceSwing = { speed: number; phase?: number; r?: number };
 
 /**
  * A drifting mine: `range` m either side of its spot at `speed` rad/s, across the channel, or
  * up and down it when `along` is set.
  */
 export type MineDrift = { range: number; speed: number; phase?: number; along?: boolean };
+
+/** A boost pad is 5 m along the stream and 3 m across: two chevrons. */
+const BOOST_HALF_LENGTH = 2.5;
+const BOOST_HALF_WIDTH = 1.5;
 
 export type ChannelKit = {
   samples: Sample[];
@@ -26,8 +37,14 @@ export type ChannelKit = {
   outerBends: (minTurn: number, minLength?: number) => Span[];
   /** A drop gate's bar spanning the channel, bank to bank, at arc length `s`. */
   dropgate: (id: string, s: number, timing?: DropgateTiming) => HazardDef;
+  /** A double gate at arc length `s`: two doors hinged on the banks that meet in the middle. */
+  doublegate: (id: string, s: number, timing?: DoublegateTiming) => HazardDef;
   /** A mine of radius `r` at arc length `s`, `lat` m left of center, still or drifting across. */
   mine: (id: string, s: number, lat: number, r?: number, drift?: MineDrift) => HazardDef;
+  /** A mace on a gantry over the centerline at arc length `s`, swinging from bank to bank. */
+  mace: (id: string, s: number, swing: MaceSwing) => HazardDef;
+  /** A boost pad at arc length `s`, `lat` m left of center, pointing downstream. */
+  boost: (s: number, lat: number) => Box;
 };
 
 export function channelKit(channel: Channel): ChannelKit {
@@ -57,8 +74,14 @@ export function channelKit(channel: Channel): ChannelKit {
   }
 
   function dropgate(id: string, s: number, timing: DropgateTiming = {}): HazardDef {
-    const box = across(s, channel.halfWidth, 0.6);
+    const box = across(s, halfWidthAt(channel, s), 0.6);
     return { ...box, rot: box.rot + Math.PI / 2, id, kind: "dropgate", speed: 0, ...timing };
+  }
+
+  function doublegate(id: string, s: number, timing: DoublegateTiming = {}): HazardDef {
+    // Hinged a hair inside the banks: a door swung open lies flat along its bank, half in the rail.
+    const box = across(s, halfWidthAt(channel, s) - 0.25, 0.45);
+    return { ...box, rot: box.rot + Math.PI / 2, id, kind: "doublegate", speed: 0, ...timing };
   }
 
   function mine(id: string, s: number, lat: number, r = 0.9, drift?: MineDrift): HazardDef {
@@ -73,15 +96,32 @@ export function channelKit(channel: Channel): ChannelKit {
     };
   }
 
+  function mace(id: string, s: number, swing: MaceSwing): HazardDef {
+    const r = swing.r ?? 1.5;
+    const box = across(s, r, r);
+    return {
+      ...box,
+      rot: box.rot + Math.PI / 2,
+      id,
+      kind: "mace",
+      speed: swing.speed,
+      range: halfWidthAt(channel, s) - MACE_BANK_GAP,
+      phase: swing.phase ?? 0,
+    };
+  }
+
   return {
     samples,
     length,
     at,
     across,
-    gate: (s) => across(s, 0.5, channel.halfWidth - 0.3),
+    gate: (s) => across(s, 0.5, halfWidthAt(channel, s) - 0.3),
     outerBends,
     dropgate,
+    doublegate,
     mine,
+    mace,
+    boost: (s, lat) => across(s, BOOST_HALF_LENGTH, BOOST_HALF_WIDTH, lat),
   };
 }
 

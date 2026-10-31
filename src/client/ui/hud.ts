@@ -202,6 +202,14 @@ export function createHud(host: HTMLElement, opts: HudOptions) {
   }
 
   return {
+    /** Each rider's color (name and gas bar), changed only when it differs. */
+    setColors(colors: readonly string[]) {
+      tags.forEach((tag, i) => {
+        const color = colors[i];
+        if (color !== undefined && tag.style.getPropertyValue("--seat") !== color)
+          tag.style.setProperty("--seat", color);
+      });
+    },
     /** Online, riders come and go: the server says who sits where. */
     setLabels(labels: readonly string[]) {
       labelSpans.forEach((span, i) => {

@@ -10,7 +10,7 @@ export function bumperRadius(def: HazardDef, t: number): number {
 }
 
 /**
- * A round spiked pumpkin that swells and shrinks where it floats, and throws the raft far
+ * A round spiked ball that swells and shrinks where it floats, and throws the raft far
  * harder than a bar does. Touching it wipes the crew out.
  */
 function createBumper(world: RAPIER.World, def: HazardDef): Hazard {

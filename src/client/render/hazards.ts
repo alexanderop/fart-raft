@@ -1,7 +1,10 @@
 import * as THREE from "three";
 import { bumperRadius } from "../../sim/hazards/bumper.ts";
+import { doublegateAngles, doublegateShut } from "../../sim/hazards/doublegate.ts";
 import { dropgateLift, dropgateShake } from "../../sim/hazards/dropgate.ts";
 import { hammerLift, hammerPivot } from "../../sim/hazards/hammer.ts";
+import { MACE_BANK_GAP } from "../../sim/constants.ts";
+import { maceAngle, maceBob, maceRope } from "../../sim/hazards/mace.ts";
 import { mineCenter } from "../../sim/hazards/mine.ts";
 import { pistonOut } from "../../sim/hazards/piston.ts";
 import type { HazardDef, Pose } from "../../sim/types.ts";
@@ -43,9 +46,46 @@ const SPLASH_TIME = 0.6;
 /** How far a raised bar fades when it hides the raft from the camera, and how fast (1/s). */
 const FADED = 0.22;
 const FADE_RATE = 8;
+/** `doublegate_door` in the kit: its length, hinge to tip, scaled to the gate's hx. */
+const DOOR_LENGTH = 6.75;
+/** Shut doors hide the raft that just slipped through: aim the sight test this high (m). */
+const DOOR_MID = 1.5;
 /** A mine bobs this high (m), and its lamp blinks once per this many seconds. */
 const MINE_BOB = 0.1;
 const MINE_BLINK = 1.4;
+/**
+ * A mace's bob hangs this far (m, times its radius) above the water at the bottom of its swing:
+ * low enough to sweep the riders. Its collar's top sits MACE_COLLAR radii above the bob's center.
+ */
+const MACE_LOW = 1.1;
+const MACE_COLLAR = 0.75;
+/** The gantry posts stand this far (m) beyond the bob's swing plus MACE_BANK_GAP, on the banks. */
+const MACE_POST_OUT = 0.7;
+/** `mace_post` and `mace_beam` in the kit: the post's height and the beam's half-length. */
+const MACE_POST_H = 10;
+const MACE_BEAM_HALF = 1;
+/** The bob turns slowly on its rope, rad/s. */
+const MACE_SPIN = 0.6;
+
+/**
+ * Does a ball of radius `r` at three-space `at` stand between the camera and the raft? It does when
+ * it is between them and within `r` (plus a margin) of the sight line to the riders.
+ */
+function blocks(at: THREE.Vector3, r: number, eye: Eye): boolean {
+  const ax = eye.camera.x;
+  const ay = eye.camera.y;
+  const az = eye.camera.z;
+  const dx = eye.raft.x - ax;
+  const dy = 1.2 - ay;
+  const dz = -eye.raft.y - az;
+  const len2 = dx * dx + dy * dy + dz * dz;
+  const f = ((at.x - ax) * dx + (at.y - ay) * dy + (at.z - az) * dz) / len2;
+  if (f <= 0 || f >= 1) return false;
+  const px = ax + dx * f - at.x;
+  const py = ay + dy * f - at.y;
+  const pz = az + dz * f - at.z;
+  return Math.hypot(px, py, pz) < r + 1;
+}
 
 /**
  * Does a bar hanging `height` m up on the line through (x, y) along `rot` stand between the camera
@@ -84,6 +124,7 @@ function ownMaterials(root: THREE.Object3D, pick: (m: THREE.Material) => boolean
 const ASSET: Partial<Record<HazardDef["kind"], string>> = {
   cross: "spinner",
   dropgate: "dropgate_bar",
+  doublegate: "doublegate_door",
 };
 
 /** Builds one kind's view around `mesh`, its kit node (see `ASSET`). */
@@ -218,6 +259,43 @@ const VIEWS: Record<HazardDef["kind"], ViewOf> = {
       },
     };
   },
+  doublegate(def, mesh, kit) {
+    // A post and a door on each bank; the doors swing about their hinges by the shared schedule.
+    const holder = new THREE.Group();
+    const doors = [mesh, kit.clone("doublegate_door")];
+    doors.forEach((door, i) => {
+      const post = kit.clone("doublegate_post");
+      const hinge = new THREE.Group();
+      // The holder is posed at (x, y, rot): the left hinge sits hx along its +x, the right one -hx.
+      hinge.position.x = i === 0 ? def.hx : -def.hx;
+      post.rotation.y = i === 0 ? 0 : Math.PI; // the post stands behind its door, in the bank
+      door.scale.x = def.hx / DOOR_LENGTH;
+      hinge.add(post, door);
+      holder.add(hinge);
+    });
+    applyPose(holder, def);
+    const faded = doors.flatMap((door) => ownMaterials(door));
+    for (const m of faded) m.transparent = true;
+    let opacity = 1;
+    let lastT = 0;
+    return {
+      root: holder,
+      update(_, t, eye) {
+        const angles = doublegateAngles(def, t);
+        // Door angles are sim angles; relative to the holder (posed at rot) they turn about y.
+        doors.forEach((door, i) => (door.rotation.y = angles[i]! - def.rot));
+        const dt = Math.min(0.1, Math.max(0, t - lastT));
+        lastT = t;
+        const shut = doublegateShut(def, t) > 0.3;
+        const target = shut && occludes(def.x, def.y, def.rot, DOOR_MID, eye) ? FADED : 1;
+        opacity += (target - opacity) * Math.min(1, FADE_RATE * dt);
+        for (const m of faded) {
+          m.opacity = opacity;
+          m.depthWrite = opacity > 0.99;
+        }
+      },
+    };
+  },
   mine(def, mesh) {
     // Bobs on the water and turns slowly; its lamp blinks, each mine on its own beat.
     const holder = new THREE.Group();
@@ -237,6 +315,55 @@ const VIEWS: Record<HazardDef["kind"], ViewOf> = {
         const u = (t / MINE_BLINK + beat) % 1;
         const blink = Math.max(0, 1 - Math.abs(u - 0.1) / 0.1); // a short flash, then dim
         lamps.forEach((m, i) => (m.emissiveIntensity = glow[i]! * (0.25 + 1.5 * blink)));
+      },
+    };
+  },
+  mace(def, mesh, kit) {
+    // A gantry stands across the channel; the rope swings from the middle of its beam by the shared
+    // schedule, and the bob rises on the arc exactly as `maceBob` says.
+    const holder = new THREE.Group();
+    const rope = maceRope(def);
+    const low = def.hx * MACE_LOW;
+    const pivot = low + rope;
+    const out = (def.range ?? 0) + MACE_BANK_GAP + MACE_POST_OUT;
+    for (const side of [1, -1]) {
+      const post = kit.clone("mace_post");
+      post.position.x = side * out;
+      post.scale.y = (pivot + 0.6) / MACE_POST_H;
+      holder.add(post);
+    }
+    const beam = kit.clone("mace_beam");
+    beam.position.y = pivot + 0.6;
+    beam.scale.x = (out + 0.5) / MACE_BEAM_HALF;
+    const swing = new THREE.Group();
+    swing.position.y = pivot;
+    const line = kit.clone("mace_rope");
+    line.scale.y = rope - def.hx * MACE_COLLAR;
+    mesh.scale.setScalar(def.hx);
+    mesh.position.y = -rope;
+    swing.add(line, mesh);
+    holder.add(beam, swing);
+    applyPose(holder, def);
+    const faded = [beam, line, mesh].flatMap((o) => ownMaterials(o));
+    for (const m of faded) m.transparent = true;
+    const at = new THREE.Vector3();
+    let opacity = 1;
+    let lastT = 0;
+    return {
+      root: holder,
+      update(_, t, eye) {
+        swing.rotation.z = maceAngle(def, t);
+        mesh.rotation.y = MACE_SPIN * t;
+        const dt = Math.min(0.1, Math.max(0, t - lastT));
+        lastT = t;
+        const bob = maceBob(def, t);
+        at.set(bob.x, low + bob.lift, -bob.y);
+        const hidden = blocks(at, def.hx, eye) || occludes(def.x, def.y, def.rot, pivot, eye);
+        opacity += ((hidden ? FADED : 1) - opacity) * Math.min(1, FADE_RATE * dt);
+        for (const m of faded) {
+          m.opacity = opacity;
+          m.depthWrite = opacity > 0.99;
+        }
       },
     };
   },

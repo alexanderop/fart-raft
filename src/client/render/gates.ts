@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { halfWidthAt, nearestS, sampleChannel } from "../../sim/channel.ts";
 import { RIDER_RING } from "../../sim/constants.ts";
 import type { Box, LevelData, Pose, SimEvent } from "../../sim/types.ts";
 import { applyPose } from "./coords.ts";
@@ -22,7 +23,7 @@ const NEAR_GATE = 45;
 const AHEAD = 6;
 /** The raft's screen box reaches this share of its own height further up, over the water just ahead. */
 const REACH = 0.2;
-/** Riders' hats top out about this high (m), and the raft's box spans the ring plus a margin. */
+/** Riders' heads top out about this high (m), and the raft's box spans the ring plus a margin. */
 const RAFT_TOP = 3;
 const RAFT_SPAN = RIDER_RING + 0.5;
 
@@ -160,13 +161,12 @@ const isAny = (m: THREE.Material): m is THREE.Material => m.isMaterial;
 /** The START gate: a Box across the channel, a few meters ahead of the spawn. Visual only. */
 function startBox(level: LevelData): Box {
   const { spawn, channel } = level;
-  return {
-    x: spawn.x + Math.cos(spawn.rot) * START_AHEAD,
-    y: spawn.y + Math.sin(spawn.rot) * START_AHEAD,
-    rot: spawn.rot,
-    hx: 0.5,
-    hy: channel ? channel.halfWidth : START_FALLBACK_HALF,
-  };
+  const x = spawn.x + Math.cos(spawn.rot) * START_AHEAD;
+  const y = spawn.y + Math.sin(spawn.rot) * START_AHEAD;
+  const hy = channel
+    ? halfWidthAt(channel, nearestS(sampleChannel(channel), { x, y }))
+    : START_FALLBACK_HALF;
+  return { x, y, rot: spawn.rot, hx: 0.5, hy };
 }
 
 /**

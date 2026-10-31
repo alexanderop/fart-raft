@@ -4,12 +4,14 @@ import { applyPose } from "../render/coords.ts";
 import { detectQuality } from "../render/quality.ts";
 
 const BUBBLES = 24;
-/** Jet speed (m/s) as a puff leaves a rider: with the drag below it carries ≈ 3.5 m. */
-const SPEED = 9;
-/** Seconds between two puffs of one seat's jet: dense enough to read as one plume. */
-const PUFF_EVERY = 0.025;
+/** Jet speed (m/s) as a puff leaves a rider: with the drag and life below it carries ≈ 2 m. */
+const SPEED = 8;
+/** Seconds between two puffs of one seat's jet: enough to read as one short plume. */
+const PUFF_EVERY = 0.04;
 /** A puff swells to this many times its birth size by the end of its life, so a jet fans out. */
-const SWELL = 2.4;
+const SWELL = 1.6;
+/** Opacity of a fresh puff; it fades to 0 over the last 60% of its life. */
+const ALPHA = 0.85;
 const TINTS = [0x8fe03a, 0xa4ea3c, 0xbdf04a, 0x7fd832, 0xc9f25c].map((c) => new THREE.Color(c));
 
 type Puff = {
@@ -54,9 +56,10 @@ const smooth = (a: number, b: number, x: number) => {
 };
 
 /**
- * Fart jets, like Fart Together's big lime plumes: while a seat farts it streams puffs that pop
- * in with overshoot, shoot out behind the rider, swell as they slow so the jet fans out into a
- * cloud, wobble, then shrink away. An InstancedMesh with a fixed
+ * Fart jets, like Fart Together's lime puffs: while a seat farts it streams small translucent
+ * puffs that pop in with overshoot, shoot out behind the rider (a short plume pointing away from
+ * it), swell a little as they slow, wobble and fade out within half a second. Opacity is per
+ * instance (`aAlpha`, patched into the material's shader). An InstancedMesh with a fixed
  * ring of slots: the oldest puff is overwritten when full. Only live puffs are drawn: they are
  * packed into the first instances each frame and `count` trimmed to them. Farts fire every sim
  * tick, so each seat is rate-limited. Now and then a bubble ring pops on the water.
@@ -71,10 +74,24 @@ export function createParticles(scene: THREE.Scene) {
       emissive: 0x4f9a12,
       emissiveIntensity: 0.55,
       transparent: true,
-      opacity: 0.92,
+      depthWrite: false,
     }),
     CAPACITY,
   );
+  const alpha = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY), 1);
+  alpha.setUsage(THREE.DynamicDrawUsage);
+  mesh.geometry.setAttribute("aAlpha", alpha);
+  mesh.material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nattribute float aAlpha; varying float vAlpha;",
+      )
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvAlpha = aAlpha;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vAlpha;")
+      .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= vAlpha;");
+  };
   mesh.frustumCulled = false;
   for (let i = 0; i < CAPACITY; i++) mesh.setColorAt(i, TINTS[0]!);
   mesh.count = 0;
@@ -113,13 +130,13 @@ export function createParticles(scene: THREE.Scene) {
     const jitter = rand(-0.22, 0.22);
     Object.assign(puff, {
       age: 0,
-      life: rand(0.8, 1.15),
+      life: rand(0.45, 0.6),
       x: e.x + e.dirX * back + rand(-0.15, 0.15),
       y: e.y + e.dirY * back + rand(-0.15, 0.15),
-      h: 0.5 + rand(0, 0.15),
+      h: 0.4 + rand(0, 0.1),
       vx: (e.dirX - e.dirY * jitter) * speed,
       vy: (e.dirY + e.dirX * jitter) * speed,
-      rise: rand(0.2, 0.6),
+      rise: rand(0.1, 0.4),
       size,
       swell,
       seed: rand(0, 6.28),
@@ -131,8 +148,8 @@ export function createParticles(scene: THREE.Scene) {
     onEvent(e: SimEvent) {
       if (e.type !== "fart" || (cooldown[e.seat] ?? 0) > 0) return;
       cooldown[e.seat] = PUFF_EVERY;
-      spawn(e, rand(0.45, 0.6), rand(0.85, 1.1) * SPEED, 0.3, SWELL * rand(0.8, 1.2));
-      if (Math.random() < 0.5) spawn(e, rand(0.25, 0.35), SPEED * 0.5, 0.2, SWELL * 0.6);
+      spawn(e, rand(0.34, 0.42), rand(0.85, 1.1) * SPEED, 0.35, SWELL * rand(0.8, 1.2));
+      if (Math.random() < 0.4) spawn(e, rand(0.2, 0.26), SPEED * 0.55, 0.3, SWELL * 0.6);
       if (Math.random() < 0.12) {
         const b = bubbles[nextBubble]!;
         nextBubble = (nextBubble + 1) % BUBBLES;
@@ -146,7 +163,7 @@ export function createParticles(scene: THREE.Scene) {
     },
     update(dt: number) {
       cooldown.forEach((_, i) => (cooldown[i] = Math.max(0, cooldown[i]! - dt)));
-      const drag = Math.exp(-2.6 * dt);
+      const drag = Math.exp(-3 * dt);
       let live = 0;
       puffs.forEach((puff) => {
         puff.age += dt;
@@ -157,8 +174,8 @@ export function createParticles(scene: THREE.Scene) {
         puff.x += puff.vx * dt;
         puff.y += puff.vy * dt;
         puff.h += puff.rise * dt * (1 - t);
-        const pop = easeOutBack(Math.min(1, puff.age / 0.22));
-        const shrink = 1 - smooth(0.6, 1, t) * 0.95;
+        const pop = easeOutBack(Math.min(1, puff.age / 0.12));
+        const shrink = 1 - smooth(0.7, 1, t) * 0.5;
         const s = puff.size * pop * (1 + puff.swell * Math.sqrt(t)) * shrink;
         const w = puff.age * 13 + puff.seed;
         applyPose(dummy, { x: puff.x, y: puff.y, rot: puff.seed }, puff.h);
@@ -171,11 +188,13 @@ export function createParticles(scene: THREE.Scene) {
         dummy.updateMatrix();
         mesh.setMatrixAt(live, dummy.matrix);
         mesh.setColorAt(live, puff.tint);
+        alpha.setX(live, ALPHA * (1 - smooth(0.4, 1, t)));
         live++;
       });
       mesh.count = live;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      alpha.needsUpdate = true;
 
       bubbles.forEach((b, i) => {
         b.age += dt;

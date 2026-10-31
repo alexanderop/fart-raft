@@ -133,6 +133,20 @@ export function createWake(scene: THREE.Scene) {
       if (e.type === "fart" && (fartCooldown[e.seat] ?? 0) <= 0) {
         fartCooldown[e.seat] = 0.22;
         ripples.spawn({ x: e.x, y: e.y, radius: 2.4, life: 1.1 });
+      } else if (e.type === "boost") {
+        // A spray thrown forward off the pad, and a ring.
+        ripples.spawn({ x: e.x, y: e.y, radius: 3.4, life: 1 });
+        for (const side of [-1, 1])
+          for (let k = 0; k < 4; k++)
+            foam.spawn({
+              x: e.x - e.dirY * side * 1.6,
+              y: e.y + e.dirX * side * 1.6,
+              vx: e.dirX * (3 + k) - e.dirY * side * 2,
+              vy: e.dirY * (3 + k) + e.dirX * side * 2,
+              radius: 0.7,
+              life: 0.9,
+              grow: 1,
+            });
       } else if (e.type === "bump") {
         const radius = 2.5 + Math.min(e.speed, 8) * 0.45;
         ripples.spawn({ x: e.x, y: e.y, radius, life: 1.4 });

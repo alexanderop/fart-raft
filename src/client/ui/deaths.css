@@ -28,18 +28,18 @@
 
 .skull .bone {
   fill: #f4efe6;
-  stroke: var(--outline, #2a1440);
+  stroke: var(--outline, #1d3a57);
   stroke-width: 2;
   stroke-linejoin: round;
 }
 
 .skull .eye {
-  fill: var(--outline, #2a1440);
+  fill: var(--outline, #1d3a57);
 }
 
 .skull .teeth {
   fill: none;
-  stroke: var(--outline, #2a1440);
+  stroke: var(--outline, #1d3a57);
   stroke-width: 1.6;
   stroke-linecap: round;
 }
@@ -59,7 +59,7 @@
 .finish-deaths {
   font-size: 24px;
   font-weight: 800;
-  -webkit-text-stroke: 4px var(--outline, #2a1440);
+  -webkit-text-stroke: 4px var(--outline, #1d3a57);
 }
 
 .hud-hurt {

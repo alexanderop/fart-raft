@@ -1,8 +1,9 @@
-import { levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
-import { hazardRate, RAFT_HULL } from "../sim/constants.ts";
+import { halfWidthAt, levelWalls, nearestS, pointAt, type Sample } from "../sim/channel.ts";
+import { padAt } from "../sim/boost.ts";
+import { BOOST_ACCEL, BOOST_SPEED, hazardRate, RAFT_HULL } from "../sim/constants.ts";
 import { hazardBoxes, hazardReach } from "../sim/hazards/index.ts";
 import { hazardTime } from "../sim/hazards/shape.ts";
-import type { Box, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
+import type { Box, Channel, LevelData, Snapshot, Vec2 } from "../sim/types.ts";
 import { distToBox } from "./geometry.ts";
 
 // A hazard hit costs a life, so bots do not blunder through a spinner. Hazards move on a fixed
@@ -73,6 +74,14 @@ export type Frame = {
   walls: readonly Box[];
 };
 
+/** The channel's least half-width between arc lengths `from` and `to`, checked every 2 m. */
+function narrowest(ch: Channel, from: number, to: number): number {
+  if (!ch.ponds?.length) return ch.halfWidth;
+  let w = halfWidthAt(ch, to);
+  for (let s = from; s < to; s += 2) w = Math.min(w, halfWidthAt(ch, s));
+  return w;
+}
+
 export function makeFrame(level: LevelData, route: readonly Sample[] | null): Frame {
   if (route) {
     return {
@@ -87,7 +96,7 @@ export function makeFrame(level: LevelData, route: readonly Sample[] | null): Fr
         return { s, lat: (p.x - c.x) * c.nx + (p.y - c.y) * c.ny };
       },
       reach(from, to) {
-        const room = Math.max(0, level.channel!.halfWidth - RAFT_HULL);
+        const room = Math.max(0, narrowest(level.channel!, from, to) - RAFT_HULL);
         const spiked = (side: "left" | "right") =>
           level.channel!.spikes.some((sp) => sp.side === side && sp.from < to && sp.to > from);
         return {
@@ -170,7 +179,7 @@ export function planCrossing(
   }
   if (!next) return null;
 
-  // Hazards whose zones overlap the next one's are crossed together: a row of pumpkins is one hazard.
+  // Hazards whose zones overlap the next one's are crossed together: a row of bumpers is one hazard.
   const group = [next];
   for (let grew = true; grew;) {
     grew = false;
@@ -245,6 +254,7 @@ export function planCrossing(
   // only there holds its pace (sliding into its lane meanwhile) before it goes.
   const xLaunch = Math.max(0, zoneStart - LAUNCH_GAP);
 
+  const pads = level.boosts ?? [];
   /** Room (m) left to the hazard and the walls along a crossing in `lat` that, at the launch point, holds `pace` for `holdFor` s, then goes full speed. */
   const room = (lat: number, pace: number, holdFor: number, floor: number): number => {
     let x = 0;
@@ -274,6 +284,8 @@ export function planCrossing(
       if (x > end) return worst;
       const goal = held >= 0 && t - held < holdFor ? pace : paces.fast;
       v += ((goal - v) * DT) / RESPONSE;
+      // A boost pad shoves the raft on whatever the crew wants: a lane over one arrives early.
+      if (pads.length && padAt(pads, p) >= 0) v = Math.min(BOOST_SPEED, v + BOOST_ACCEL * DT);
       x += v * DT;
     }
     return -Infinity; // never got through in time: the worst crossing of all

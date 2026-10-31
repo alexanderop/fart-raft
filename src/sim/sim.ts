@@ -10,6 +10,7 @@ import {
   walkSpeed,
   type Zone,
 } from "./constants.ts";
+import { boostRaft, padAt } from "./boost.ts";
 import { flowSpeed, nearestS, pointAt, sampleChannel, type Sample } from "./channel.ts";
 import {
   freshHealth,
@@ -32,6 +33,7 @@ import {
   type Raft,
 } from "./raft.ts";
 import type {
+  Box,
   Channel,
   Difficulty,
   LevelData,
@@ -51,6 +53,9 @@ export type Sim = {
   channel: Channel | null;
   stream: Sample[] | null;
   hazards: Hazard[];
+  /** Boost pads (LevelData `boosts`), and the one the raft is on now (-1: none). */
+  boosts: Box[];
+  onPad: number;
   /** Hazard seconds per tick for each hazard, in `hazards` order (`hazardRate` of its kind). */
   hazardSteps: number[];
   checkpointByHandle: Map<number, number>;
@@ -92,6 +97,8 @@ export function createSim(
     channel: level.channel,
     stream: level.channel ? sampleChannel(level.channel) : null,
     hazards,
+    boosts: level.boosts ?? [],
+    onPad: -1,
     // Hazard time runs at the difficulty's rate for each kind: the clock `hazardTime` gives bots and renderer.
     hazardSteps: level.hazards.map((def) => STEP * hazardRate(difficulty, def.kind)),
     checkpointByHandle,
@@ -123,6 +130,7 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
     events.push({ type: "respawn", x: at.x, y: at.y });
   }
   applyWaterDrag(sim.raft, racing ? flowAt(sim, sim.raft.body.translation()) : STILL);
+  if (racing && sim.health.respawnIn === 0) boost(sim, events);
   sim.hazards.forEach((hazard, i) => hazard.update(sim.hazardSteps[i]!));
 
   sim.world.step(sim.eventQueue);
@@ -155,6 +163,25 @@ export function step(sim: Sim, inputs: readonly SeatInput[]): SimEvent[] {
 
   sim.tick++;
   return events;
+}
+
+/** A raft on a boost pad speeds up along it; running onto one is a `boost` event. */
+function boost(sim: Sim, events: SimEvent[]): void {
+  const at = sim.raft.body.translation();
+  const i = padAt(sim.boosts, at);
+  if (i >= 0) {
+    const pad = sim.boosts[i]!;
+    boostRaft(sim.raft, pad);
+    if (i !== sim.onPad)
+      events.push({
+        type: "boost",
+        x: at.x,
+        y: at.y,
+        dirX: Math.cos(pad.rot),
+        dirY: Math.sin(pad.rot),
+      });
+  }
+  sim.onPad = i;
 }
 
 /** Contact gaps up to this (m) count as touching: Rapier reports contacts a hair before impact. */
