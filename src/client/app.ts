@@ -50,6 +50,10 @@ export type AppState =
       online?: { conn: Connection; invite: string };
     };
 
+/** The connection a state holds: `go()` closes it unless the next state holds the same one. */
+const connOf = (state: AppState): Connection | undefined =>
+  state.kind === "room" ? state.conn : state.kind === "racing" ? state.online?.conn : undefined;
+
 /** Runs the game in `host`: deep links (`?players=…`, `?room=…`) skip the start menu. */
 export function startApp(host: HTMLElement): void {
   const physics = initPhysics(); // loads Rapier while the menu is up
@@ -67,12 +71,16 @@ export function startApp(host: HTMLElement): void {
   let generation = 0;
   let cleanups: (() => void)[] = [];
   const own = (cleanup: () => void) => void cleanups.push(cleanup);
+  let current: AppState | undefined;
 
   function go(next: AppState): void {
     const old = cleanups;
     cleanups = [];
     generation++;
     for (const cleanup of old.toReversed()) cleanup();
+    const held = current && connOf(current);
+    if (held && held !== connOf(next)) held.close();
+    current = next;
     enter(next, generation);
   }
 
@@ -170,10 +178,6 @@ export function startApp(host: HTMLElement): void {
 
       case "room": {
         const { conn } = state;
-        let handedOff = false;
-        own(() => {
-          if (!handedOff) conn.close();
-        });
         own(showRoom(host, conn, state.invite, toMenu));
         own(
           listen("keydown", (e) => {
@@ -185,7 +189,6 @@ export function startApp(host: HTMLElement): void {
         // Resolves on the first frame: the host started, or we joined mid-race.
         void onlineSession(conn, heading).then((session) => {
           if (!live()) return session.dispose();
-          handedOff = true;
           go({
             kind: "racing",
             level,
@@ -237,16 +240,11 @@ export function startApp(host: HTMLElement): void {
     own(() => touch.dispose());
     if (online) {
       const { conn, invite } = online;
-      let handedOff = false;
-      own(() => {
-        if (!handedOff) conn.close();
-      });
       holdSeat(conn, live);
       // The host sent the room back to its lobby: same connection, same seat, no reload.
       own(
         conn.onRoster((roster) => {
           if (roster.started) return;
-          handedOff = true;
           go({ kind: "room", conn, invite });
         }),
       );
