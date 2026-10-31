@@ -325,9 +325,11 @@ async function openLink(
       runtime.runFork(client.SendInput({ ...seat, input }, { discard: true }).pipe(Effect.ignore));
     },
     start() {
+      if (closed) return;
       runtime.runFork(client.Start(seat).pipe(Effect.ignore));
     },
     restart() {
+      if (closed) return;
       runtime.runFork(client.Restart(seat).pipe(Effect.ignore));
     },
     toLobby() {
