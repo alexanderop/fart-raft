@@ -1687,6 +1687,69 @@ button {
   border-left: 6px solid var(--c);
 }
 
+.lobby-race {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.lobby-race-name {
+  font-weight: 800;
+}
+
+.lobby-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.lobby-team {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 16px;
+  border-top: 6px solid var(--team);
+  background: color-mix(in srgb, var(--team) 10%, #fff);
+}
+
+.lobby-team-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--team);
+  -webkit-text-stroke: 3px var(--outline);
+  paint-order: stroke fill;
+}
+
+.lobby-team-name small {
+  font-size: 14px;
+  color: var(--outline);
+  -webkit-text-stroke: 0;
+}
+
+.lobby-team .lobby-seats {
+  grid-template-columns: 1fr;
+  margin: 0;
+}
+
+.lobby-team-join {
+  margin-top: 0;
+  padding: 8px;
+  font-size: 16px;
+}
+
+.lobby-team-join:disabled {
+  box-shadow: none;
+}
+
+/* "Both teams need a rider" is longer than "Start race". */
+.lobby .menu-start:disabled {
+  font-size: 20px;
+}
+
 .race-picker {
   display: grid;
   gap: 8px;

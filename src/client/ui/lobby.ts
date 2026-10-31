@@ -1,16 +1,29 @@
 import { connect, createRoom, type Connection } from "../../net/client.ts";
 import { showBanner } from "./banner.ts";
-import { difficultyPicker, DIFFICULTY_LABELS } from "./pickers.ts";
-import { lastDifficulty, loadPlayers, savePlayers } from "./menu.ts";
+import {
+  contactPicker,
+  difficultyPicker,
+  DIFFICULTY_LABELS,
+  RACE_LABELS,
+  racePicker,
+} from "./pickers.ts";
+import { lastDifficulty, lastRace, loadPlayers, savePlayers } from "./menu.ts";
+import { teamColor, teamName } from "../teams.ts";
 import { openWardrobe } from "./wardrobe.ts";
 import { lookBadge, lookColor, type Look } from "../../look.ts";
 import {
   CODE_LENGTH,
   CODE_LETTERS,
   isCourseName,
+  isTeamMode,
   MAX_NAME,
+  MAX_TEAM,
   placeOf,
+  startBlocker,
+  TEAMS,
+  teamSize,
   type CourseName,
+  type Player,
   type Roster,
 } from "../../net/protocol.ts";
 
@@ -95,6 +108,9 @@ export function showOnlineMenu(
           </section>
           <section>
             <div class="menu-label">Or start a new one</div>
+            <div data-race-picker></div>
+            <div data-mode-picker></div>
+            <div class="menu-label">Course</div>
             <div class="lobby-courses">
               ${PICKABLE.map(
                 (c) =>
@@ -103,7 +119,6 @@ export function showOnlineMenu(
                   </button>`,
               ).join("")}
             </div>
-            <div data-mode-picker></div>
           </section>
         </div>
         <p class="lobby-error" data-error role="alert"></p>
@@ -118,6 +133,8 @@ export function showOnlineMenu(
   const errorLine = root.querySelector<HTMLElement>("[data-error]")!;
   const mode = difficultyPicker(lastDifficulty());
   root.querySelector("[data-mode-picker]")!.append(mode.el);
+  const race = racePicker(lastRace());
+  root.querySelector("[data-race-picker]")!.append(race.el);
   const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
   const dressButton = root.querySelector<HTMLButtonElement>("[data-dress]")!;
   let look = myLook();
@@ -178,16 +195,19 @@ export function showOnlineMenu(
     for (const b of root.querySelectorAll<HTMLButtonElement>("[data-course]")) {
       const course = b.dataset.course;
       if (!isCourseName(course)) continue;
-      b.addEventListener("click", () => enter(() => createRoom(server, course, mode.value())));
+      b.addEventListener("click", () =>
+        enter(() => createRoom(server, course, mode.value(), race.value())),
+      );
     }
     root.querySelector("[data-back]")!.addEventListener("click", () => finish(undefined));
   });
 }
 
 /**
- * The room before the race: its code and invite link, who is in, and Start for the host.
- * Re-renders on every roster change. Leave calls `onLeave`; call the returned function to take
- * it down.
+ * The room before the race: its code and invite link, who is in, and Start for the host. A team
+ * room splits the players into Red and Blue columns with a Join button each, and the host picks
+ * Ghost or Bump. Re-renders on every roster change. Leave calls `onLeave`; call the returned
+ * function to take it down.
  */
 export function showRoom(
   host: HTMLElement,
@@ -197,19 +217,25 @@ export function showRoom(
 ): () => void {
   const { course: picked, difficulty } = conn.roster();
   const course = PICKABLE.find((c) => c.course === picked)?.label ?? "";
-  const mode = DIFFICULTY_LABELS[difficulty].label;
+  const level = DIFFICULTY_LABELS[difficulty].label;
   host.insertAdjacentHTML(
     "beforeend",
     `<div class="menu" role="dialog" aria-labelledby="room-title">
       <div class="menu-card lobby">
         <div class="menu-label" id="room-title">Room code</div>
         <div class="lobby-code" aria-live="polite">${conn.code}</div>
-        <div class="lobby-course-name">${course} · ${mode}</div>
+        <div class="lobby-course-name">${course} · ${level}</div>
+        <div class="lobby-race" data-race>
+          <div class="lobby-race-name" data-race-name></div>
+        </div>
         <div class="lobby-row lobby-invite">
           <input class="lobby-input" readonly value="${escapeHtml(invite)}" aria-label="Invite link" data-link />
           <button type="button" class="menu-online lobby-copy" data-copy>Copy link</button>
         </div>
-        <ol class="menu-seats lobby-seats" data-seats></ol>
+        <div data-who>
+          <ol class="menu-seats lobby-seats" data-seats></ol>
+          <div class="lobby-teams" data-teams></div>
+        </div>
         <button type="button" class="menu-start" data-start>Start race</button>
         <p class="menu-hint" data-wait></p>
         <button type="button" class="lobby-back" data-leave>← Leave</button>
@@ -217,35 +243,89 @@ export function showRoom(
     </div>`,
   );
   const root = host.querySelector<HTMLElement>(".menu:last-child")!;
+  const who = root.querySelector<HTMLElement>("[data-who]")!;
   const seats = root.querySelector<HTMLElement>("[data-seats]")!;
+  const teams = root.querySelector<HTMLElement>("[data-teams]")!;
+  const raceRow = root.querySelector<HTMLElement>("[data-race]")!;
+  const raceName = root.querySelector<HTMLElement>("[data-race-name]")!;
   const start = root.querySelector<HTMLButtonElement>("[data-start]")!;
   const wait = root.querySelector<HTMLElement>("[data-wait]")!;
   const copy = root.querySelector<HTMLButtonElement>("[data-copy]")!;
   const link = root.querySelector<HTMLInputElement>("[data-link]")!;
+  // Only the host switches Ghost / Bump; everyone else reads the mode's name.
+  const contact = contactPicker("ghost", (c) => conn.setMode(c));
+  raceRow.append(contact.el);
+
+  /** One player's line; your own is a button that opens the wardrobe. */
+  const playerItem = (roster: Roster, player: Player, i: number) => {
+    const tags = [i === roster.host ? "👑" : "", i === conn.seat ? "(you)" : ""].join(" ");
+    const badge = `<span class="menu-dress-badge">${lookBadge(player.look)}</span>`;
+    const name = `${badge}<span><b>${escapeHtml(player.name)}</b> ${tags}</span>`;
+    if (i !== conn.seat) {
+      return `<li class="menu-seat lobby-player" style="--c:${lookColor(player.look)}">${name}</li>`;
+    }
+    return `<li class="menu-seat me" style="--c:${lookColor(player.look)}">
+      <button type="button" class="menu-dress" data-dress aria-label="Dress up your rider">
+        ${name}<span class="menu-dress-edit">🎨</span>
+      </button>
+    </li>`;
+  };
+
+  /** Red and Blue side by side: who is on each, and a Join button unless full or yours. */
+  const teamColumns = (roster: Roster) => {
+    const mine = roster.seats[conn.seat]?.team;
+    return TEAMS.map((_, t) => {
+      const team = t === 0 ? 0 : 1;
+      const size = teamSize(roster, team);
+      const players = roster.seats
+        .map((p, i) => (p?.team === team ? playerItem(roster, p, i) : ""))
+        .join("");
+      const label =
+        mine === team
+          ? "✓ Your team"
+          : size >= MAX_TEAM
+            ? `${teamName(team)} is full`
+            : `Join ${teamName(team)}`;
+      const disabled = mine === team || size >= MAX_TEAM ? "disabled" : "";
+      return `<section class="lobby-team" style="--team:${teamColor(team)}">
+        <h3 class="lobby-team-name">${teamName(team)} <small>${size}/${MAX_TEAM}</small></h3>
+        <ol class="menu-seats lobby-seats">${players || `<li class="open">No riders yet</li>`}</ol>
+        <button type="button" class="menu-online lobby-team-join" data-team="${team}" ${disabled}>${label}</button>
+      </section>`;
+    }).join("");
+  };
 
   const render = (roster: Roster) => {
-    seats.innerHTML = roster.seats
-      .map((player, i) => {
-        if (player === null) return `<li class="open">Open seat<small>share the link</small></li>`;
-        const tags = [i === roster.host ? "👑" : "", i === conn.seat ? "(you)" : ""].join(" ");
-        const badge = `<span class="menu-dress-badge">${lookBadge(player.look)}</span>`;
-        const who = `${badge}<span><b>${escapeHtml(player.name)}</b> ${tags}</span>`;
-        if (i !== conn.seat) {
-          return `<li class="menu-seat lobby-player" style="--c:${lookColor(player.look)}">${who}</li>`;
-        }
-        return `<li class="menu-seat me" style="--c:${lookColor(player.look)}">
-          <button type="button" class="menu-dress" data-dress aria-label="Dress up your rider">
-            ${who}<span class="menu-dress-edit">🎨</span>
-          </button>
-        </li>`;
-      })
-      .join("");
+    const team = isTeamMode(roster.mode);
     const amHost = roster.host === conn.seat;
+    seats.hidden = team;
+    teams.hidden = !team;
+    raceRow.hidden = !team;
+    if (team) {
+      teams.innerHTML = teamColumns(roster);
+      contact.el.hidden = !amHost;
+      contact.set(roster.mode === "bump" ? "bump" : "ghost");
+      raceName.hidden = amHost;
+      raceName.textContent = RACE_LABELS[roster.mode].label;
+    } else {
+      seats.innerHTML = roster.seats
+        .map((player, i) =>
+          player === null
+            ? `<li class="open">Open seat<small>share the link</small></li>`
+            : playerItem(roster, player, i),
+        )
+        .join("");
+    }
     start.hidden = !amHost;
+    const blocked = startBlocker(roster);
+    start.disabled = blocked !== null;
+    start.textContent = blocked ?? "Start race";
     const hostName =
       (roster.host === null ? undefined : roster.seats[roster.host]?.name) ?? "the host";
     wait.textContent = amHost
-      ? "Everyone here races. Friends who join mid-race ride in the next one."
+      ? team
+        ? "Pick your team. Friends who join mid-race ride in the next one."
+        : "Everyone here races. Friends who join mid-race ride in the next one."
       : `Waiting for ${hostName} to start…`;
     if (amHost && document.activeElement === document.body) start.focus();
   };
@@ -254,8 +334,14 @@ export function showRoom(
   let dressing = false;
   // The host may start while the wardrobe is open: the race takes the screen, so close it.
   const leaving = new AbortController();
-  seats.addEventListener("click", async (e) => {
-    if (dressing || !(e.target instanceof Element && e.target.closest("[data-dress]"))) return;
+  who.addEventListener("click", async (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    const join = target?.closest<HTMLButtonElement>("[data-team]");
+    if (join) {
+      conn.setTeam(join.dataset.team === "1" ? 1 : 0);
+      return;
+    }
+    if (dressing || !target?.closest("[data-dress]")) return;
     const mine = conn.roster().seats[conn.seat];
     dressing = true;
     const chosen = await openWardrobe(host, {
